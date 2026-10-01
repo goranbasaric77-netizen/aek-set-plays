@@ -1,6 +1,6 @@
 {
-  "name": "AEK Set Plays",
-  "short_name": "Set Plays",
+  "name": "AEK Set - Plays",
+  "short_name": "AEK Set - Plays",
   "display": "standalone",
   "start_url": "./",
   "scope": "./",
