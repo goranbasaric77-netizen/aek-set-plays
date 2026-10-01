@@ -37,7 +37,7 @@
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45}
 .wrap{max-width:1280px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:18px}
 header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;border-bottom:3px solid var(--accent);padding-bottom:12px}
-.brand{display:flex;flex-direction:column;gap:2px}
+.brandwrap{display:flex;align-items:center;gap:14px}.crest{height:56px;width:auto;flex:none}.brand{display:flex;flex-direction:column;gap:2px}
 .club{font:600 12px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 h1{font:700 34px/1 var(--f-display);margin:0;letter-spacing:.01em;text-transform:uppercase}
 .tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px}
@@ -146,14 +146,14 @@ textarea{min-height:70px;resize:vertical;width:100%}
 .toggle{display:flex;align-items:center;gap:8px;font-weight:500}
 .actions{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .confirm{background:var(--def-soft);color:var(--def);border-radius:6px;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
-@media (max-width:560px){h1{font-size:28px}.row2{grid-template-columns:1fr}}
+@media (max-width:560px){h1{font-size:28px}.crest{height:46px}.row2{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head><body>
 
 <div class="wrap">
   <header class="top">
-    <div class="brand"><span class="club">AEK Athens FC · Performance Department</span><h1>Set Plays Planner</h1></div>
+    <div class="brandwrap"><img class="crest" src="logo.png" alt="AEK Athens FC"><div class="brand"><span class="club">AEK Athens FC · Performance Department</span><h1>Set Plays Planner</h1></div></div>
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-plan" aria-selected="true">Week planner</button>
       <button role="tab" id="tab-hist" aria-selected="false">History</button>
