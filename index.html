@@ -17,7 +17,7 @@
   --bg:#f2f3f1; --surface:#ffffff; --surface2:#f7f7f5; --ink:#16171b; --muted:#666a72; --line:#dcdee1;
   --accent:#f5c400; --accent-ink:#1a1600; --accent-soft:#fff3bf; --plan:#a88400;
   --off:#2f5d8a; --off-soft:#e6eef7; --def:#9b3b33; --def-soft:#f6e6e4;
-  --match:#3d7a48; --match-soft:#e5f1e7;
+  --match:#3d7a48; --match-soft:#e5f1e7; --vid:#6b4fa0; --vid-soft:#efe9f7;
   --ok:#2f7d4a; --warn:#b07400; --bad:#b4322a;
   --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
   --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -27,12 +27,12 @@
   --bg:#111215; --surface:#1a1b1f; --surface2:#202126; --ink:#eceef1; --muted:#9a9ea7; --line:#2e3036;
   --accent:#f5c400; --accent-ink:#1a1600; --accent-soft:#3a3209; --plan:#e0b830;
   --off:#79a6d8; --off-soft:#1c2633; --def:#d98479; --def-soft:#33201e;
-  --match:#6cb27a; --match-soft:#1a2a1d; --ok:#5fbf7f; --warn:#e0a63a; --bad:#e8675d; color-scheme:dark}}
+  --match:#6cb27a; --match-soft:#1a2a1d; --vid:#b39ddb; --vid-soft:#26203a; --ok:#5fbf7f; --warn:#e0a63a; --bad:#e8675d; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#111215; --surface:#1a1b1f; --surface2:#202126; --ink:#eceef1; --muted:#9a9ea7; --line:#2e3036;
   --accent:#f5c400; --accent-ink:#1a1600; --accent-soft:#3a3209; --plan:#e0b830;
   --off:#79a6d8; --off-soft:#1c2633; --def:#d98479; --def-soft:#33201e;
-  --match:#6cb27a; --match-soft:#1a2a1d; --ok:#5fbf7f; --warn:#e0a63a; --bad:#e8675d; color-scheme:dark}
+  --match:#6cb27a; --match-soft:#1a2a1d; --vid:#b39ddb; --vid-soft:#26203a; --ok:#5fbf7f; --warn:#e0a63a; --bad:#e8675d; color-scheme:dark}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45}
 .wrap{max-width:1280px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:18px}
@@ -88,6 +88,26 @@ tr>*:last-child{border-right:0}
 .grp th{height:auto!important;padding:6px 12px!important;font:700 13px var(--f-display)!important;letter-spacing:.1em;text-transform:uppercase}
 .grp.off th{background:var(--off-soft);color:var(--off)}
 .grp.def th{background:var(--def-soft);color:var(--def)}
+.grp.vid th{background:var(--vid-soft);color:var(--vid)} .grp.vid td{background:var(--vid-soft)}
+tr.vidrow th{box-shadow:inset 4px 0 0 var(--vid)}
+td.vcell{padding:0;vertical-align:top}
+td.vcell button{all:unset;box-sizing:border-box;display:flex;flex-wrap:wrap;gap:3px;align-content:flex-start;width:100%;min-height:40px;padding:4px;cursor:pointer}
+td.vcell button:hover{background:var(--accent-soft)}
+td.vcell button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.vchip{font-size:10.5px;line-height:1;padding:3px 6px;border-radius:999px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.vchip.done{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.vchip.plan{border:1.5px dashed var(--plan);color:var(--plan)}
+.vadd{color:var(--muted);font-size:11px;align-self:center;margin:auto}
+.vlist{display:flex;flex-direction:column;gap:6px;max-height:40vh;overflow:auto}
+.vitem{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.vitem b{flex:1;font-weight:500}
+.vitem .st{border:0;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.vitem .st.done{background:var(--accent);color:var(--accent-ink)}
+.vitem .st.plan{background:none;border:1.5px dashed var(--plan);color:var(--plan)}
+.vitem .rm{border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px}
+.vitem .rm:hover{color:var(--bad)}
+.addrow{display:flex;gap:6px}.addrow select{flex:1;min-width:0}
+.chip.vid{border-color:transparent;background:var(--vid-soft);color:var(--vid)}
 .grp td{background:var(--surface2)}
 .grp.off td{background:var(--off-soft)} .grp.def td{background:var(--def-soft)}
 tr.offrow th{box-shadow:inset 4px 0 0 var(--off)}
@@ -584,7 +604,19 @@ const PLAYS=[
  {id:"d-centralfk",g:"def",n:"Central zone free kick"},
  {id:"d-throwin",g:"def",n:"Throw in"}
 ];
-const GROUPS={off:"Offensive set pieces",def:"Defensive set pieces"};
+const GROUPS={off:"Offensive set pieces",def:"Defensive set pieces",vid:"Video analysis"};
+const VIDEO=[{id:"ind",n:"Individual video",s:"player"},{id:"grp",n:"Group video",s:"unit"}];
+const UNITS_DEFAULT=["Back line","2 CM","Midfielders line (4 players)","2 CF","Back line + 2 CM","CB + FB","FB + W","2 W + 2 CF","2 CM + CF"];
+const UNITS_KEY="aek-setplays-units";
+let UNITS=UNITS_DEFAULT.slice();try{const u=JSON.parse(localStorage.getItem(UNITS_KEY)||"null");if(Array.isArray(u)&&u.length)UNITS=u}catch(e){}
+function saveUnits(){try{localStorage.setItem(UNITS_KEY,JSON.stringify(UNITS))}catch(e){}}
+const ROSTER_DEFAULT=["1 Strakosha","41 Balamotis","91 Brignoli","2 Moukoudi","3 Pilios","12 Rota","21 Vida","22 Lykogiannis","44 Relvas","6 Kairinen","8 Gacinovic","14 Majer","16 Arriaga","18 Marin","20 Mantalos","27 Vitalis","9 Jovic","10 Zubkov","11 Koita","19 Varga","23 Joao Mario","90 Zini"];
+const ROSTER_KEY="aek-setplays-roster";
+let roster=ROSTER_DEFAULT.slice();try{const r=JSON.parse(localStorage.getItem(ROSTER_KEY)||"null");if(Array.isArray(r)&&r.length)roster=r}catch(e){}
+function saveRoster(){try{localStorage.setItem(ROSTER_KEY,JSON.stringify(roster))}catch(e){}}
+const vEntries=(m,kind,i)=>((m.video||{})[kind+"|"+i])||[];
+function vCount(m,kind){let dn=0,pl=0;for(const [k,arr] of Object.entries(m.video||{})){if(!k.startsWith(kind+"|"))continue;arr.forEach(e=>e.st==="done"?dn++:pl++)}return [dn,pl]}
+function vLastDone(kind,who,uptoIso){let best=null;for(const m of sorted()){if(!m.start)continue;for(const [k,arr] of Object.entries(m.video||{})){if(!k.startsWith(kind+"|"))continue;const d=+k.split("|")[1];if(!arr.some(e=>e.st==="done"&&(!who||e.who===who)))continue;const date=addDays(m.start,d);if(uptoIso&&date>uptoIso)continue;if(!best||date>best)best=date}}return best}
 const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const MDS=["MD-5","MD-4","MD-3","MD-2","MD-1","MD","MD+1","MD+2","OFF"];
 const SESS=["Topic","PMT","Recovery","Activation","Off","Travel"];
@@ -610,14 +642,15 @@ function persist(){try{localStorage.setItem(KEY,JSON.stringify(mcs));setStatus("
 function save(id){clearTimeout(timers.all);timers.all=setTimeout(persist,250)}
 function remove(id){delete mcs[id]; curId=sorted().slice(-1)[0]?._id||null; persist(); render()}
 function exportData(){
-  const blob=new Blob([JSON.stringify({app:"aek-setplays",version:1,exported:new Date().toISOString(),microcycles:mcs},null,2)],{type:"application/json"});
+  const blob=new Blob([JSON.stringify({app:"aek-setplays",version:2,exported:new Date().toISOString(),microcycles:mcs,roster,units:UNITS},null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="set-plays-backup-"+today()+".json";document.body.appendChild(a);a.click();a.remove();
   setStatus("Backup exported");
 }
 function importData(file){
   const r=new FileReader();
   r.onload=()=>{try{const j=JSON.parse(r.result);const m=j.microcycles||j;if(typeof m!=="object")throw 0;
-    mcs={};for(const [id,v] of Object.entries(m))mcs[id]={...v,_id:id};curId=sorted().slice(-1)[0]?._id||null;persist();render();setStatus("Backup imported");}
+    mcs={};for(const [id,v] of Object.entries(m))mcs[id]={...v,_id:id};
+    if(Array.isArray(j.roster)&&j.roster.length){roster=j.roster;saveRoster()} if(Array.isArray(j.units)&&j.units.length){UNITS=j.units;saveUnits()}curId=sorted().slice(-1)[0]?._id||null;persist();render();setStatus("Backup imported");}
     catch(e){setStatus("That file is not a Set Plays backup.")}};
   r.readAsText(file);
 }
@@ -650,6 +683,7 @@ function renderPlanner(){
   const list=sorted(), idx=list.findIndex(x=>x._id===m._id);
   let offD=0,defD=0,plan=0;
   for(const [k,v] of Object.entries(m.marks||{})){const g=k.startsWith("o-")?"off":"def"; if(v==="done"){g==="off"?offD++:defD++} else plan++}
+  plan+=vCount(m,"ind")[1]+vCount(m,"grp")[1];
   const ref=m.start?addDays(m.start,0):today();
   const gaps=PLAYS.filter(p=>{const l=lastDoneBefore(p.id,addDays(ref,-1));return !l||diffDays(l,ref)>GAP});
   const plannedThisWeek=new Set(Object.keys(m.marks||{}).map(k=>k.split("|")[0]));
@@ -665,6 +699,7 @@ function renderPlanner(){
       <span class="chip off">Offensive done <span class="n">${offD}</span></span>
       <span class="chip def">Defensive done <span class="n">${defD}</span></span>
       <span class="chip plan">Still planned <span class="n">${plan}</span></span>
+      <span class="chip vid">Video done <span class="n">${vCount(m,"ind")[0]+vCount(m,"grp")[0]}</span></span>
       ${readOnly?"":`<button class="btn primary" id="newMc">+ New microcycle</button>`}
     </div></div>`;
   if(gapsOpen.length){h+=`<div class="alert"><strong>Not worked in the last ${GAP} days and not in this week's plan:</strong>${gapsOpen.map(p=>`<span class="chip">${p.g==="off"?"OFF":"DEF"} · ${esc(p.n)}${p.s?" ("+esc(p.s)+")":""}</span>`).join("")}</div>`}
@@ -688,8 +723,15 @@ function renderPlanner(){
       h+=`</tr>`;
     }
   }
+  h+=`<tr class="grp vid"><th>${GROUPS.vid}</th>${m.days.map(()=>"<td></td>").join("")}</tr>`;
+  for(const v of VIDEO){
+    h+=`<tr class="vidrow"><th>${v.n}<small>planned / done per ${v.s}</small></th>`;
+    m.days.forEach((d,i)=>{const arr=vEntries(m,v.id,i);
+      h+=`<td class="vcell"><button data-vid="${v.id}" data-vday="${i}" aria-label="${v.n}, ${DAYS[i]}: ${arr.length} entries" ${readOnly?"disabled":""}>${arr.length?arr.map(e=>`<span class="vchip ${e.st}" title="${esc(e.who)}">${esc(e.who)}${e.st==="done"?" ✓":""}</span>`).join(""):`<span class="vadd">+</span>`}</button></td>`});
+    h+=`</tr>`;
+  }
   h+=`</tbody></table></div>
-  <div class="legend"><span>Tap a cell to cycle:</span><span>empty</span>→<span><i class="mark plan">P</i> planned</span>→<span><i class="mark done">✓</i> done</span><span>· Tap a day header to set MD label, session type or match.</span></div>
+  <div class="legend"><span>Tap a cell to cycle:</span><span>empty</span>→<span><i class="mark plan">P</i> planned</span>→<span><i class="mark done">✓</i> done</span><span>· Tap a day header to set MD label, session type or match.</span><span>· Video cells: tap to add players or units.</span></div>
   <div class="notes"><label for="notes">Notes for this microcycle</label><textarea id="notes" placeholder="Opponent set-play tendencies, players missing from the session, video clips to show…" ${readOnly?"disabled":""}>${esc(m.notes||"")}</textarea></div>`;
   return h;
 }
@@ -728,9 +770,58 @@ function renderHistory(){
       h+=`<td>${r4}</td><td class="last">${s.l?fmt(s.l)+` · ${s.d}d ago`:"&nbsp;"}</td><td>${pill}</td></tr>`;
     }
   }
+  h+=`<tr class="grp vid"><th>${GROUPS.vid}</th>${cols.map(()=>"<td></td>").join("")}<td></td><td></td><td></td></tr>`;
+  for(const v of VIDEO){
+    h+=`<tr class="vidrow"><th>${v.n}</th>`;
+    cols.forEach(m=>{const [dn,pl]=vCount(m,v.id);const c=dn===0?"h0":dn<=2?"h1":dn<=4?"h2":"h3";h+=`<td><span class="heat ${c} ${pl&&!dn?"hp":""}" title="${dn} done, ${pl} planned">${dn||(pl?"P":"·")}</span></td>`});
+    let r4=0;last4.forEach(m=>r4+=vCount(m,v.id)[0]);const l=vLastDone(v.id,null,ref);
+    h+=`<td>${r4}</td><td class="last">${l?fmt(l)+` · ${diffDays(l,ref)}d ago`:"&nbsp;"}</td><td></td></tr>`;
+  }
   h+=`<tr class="totals"><th>Total done (OFF / DEF)</th>${cols.map(m=>`<td style="font-family:var(--f-mono);font-size:12px;white-space:nowrap">${perMc[m._id].off} / ${perMc[m._id].def}</td>`).join("")}<td></td><td></td><td></td></tr>`;
   h+=`</tbody></table></div><p class="histnote">Numbers in each square are blocks done that week. A ringed P means it was planned but never marked done. Status counts days from the last block done to today: OK up to ${WATCH} days, Watch up to ${GAP}, Gap beyond that.</p>`;
+  const cov=(kind,names,title)=>{
+    let t=`<h3 style="font:700 20px var(--f-display);text-transform:uppercase;margin:18px 0 8px">${title}</h3><div class="scroller"><table class="hist"><thead><tr><th>${kind==="ind"?"Player":"Unit"}</th>${cols.map(m=>`<th>MC ${m.number}</th>`).join("")}<th>Last 4 MC</th><th>Total</th><th>Last video</th></tr></thead><tbody>`;
+    const rows=names.map(w=>{const per=cols.map(m=>{let dn=0,pl=0;for(const [k,arr] of Object.entries(m.video||{})){if(!k.startsWith(kind+"|"))continue;arr.forEach(e=>{if(e.who!==w)return;e.st==="done"?dn++:pl++})}return [dn,pl]});
+      let r4=0,tot=0;last4.forEach(m=>{for(const [k,arr] of Object.entries(m.video||{}))if(k.startsWith(kind+"|"))arr.forEach(e=>{if(e.who===w&&e.st==="done")r4++})});
+      list.forEach(m=>{for(const [k,arr] of Object.entries(m.video||{}))if(k.startsWith(kind+"|"))arr.forEach(e=>{if(e.who===w&&e.st==="done")tot++})});
+      return {w,per,r4,tot,l:vLastDone(kind,w,ref)}});
+    rows.forEach(r=>{t+=`<tr><th>${esc(r.w)}</th>${r.per.map(([dn,pl])=>`<td><span class="heat ${dn?"h"+Math.min(dn,3):"h0"} ${pl&&!dn?"hp":""}">${dn||(pl?"P":"·")}</span></td>`).join("")}<td>${r.r4}</td><td>${r.tot}</td><td class="last">${r.l?fmt(r.l)+` · ${diffDays(r.l,ref)}d ago`:`<span class="pill bad">Never</span>`}</td></tr>`});
+    return t+`</tbody></table></div>`};
+  const withLogged=(kind,base)=>{const set=new Set(base);const extra=[];list.forEach(m=>{for(const [k,arr] of Object.entries(m.video||{}))if(k.startsWith(kind+"|"))arr.forEach(e=>{if(!set.has(e.who)){set.add(e.who);extra.push(e.who)}})});return base.concat(extra.sort())};
+  h+=cov("ind",withLogged("ind",roster),"Individual video coverage")+cov("grp",withLogged("grp",UNITS),"Group video coverage");
   return h;
+}
+
+/* ---------- video editor ---------- */
+function openVideo(kind,i){
+  if(readOnly)return;
+  const m=cur(); m.video=m.video||{}; const key=kind+"|"+i; m.video[key]=m.video[key]||[];
+  const v=VIDEO.find(x=>x.id===kind);
+  const close=()=>{$("#modalRoot").innerHTML="";save(m._id);render()};
+  const draw=()=>{
+    const arr=m.video[key], used=new Set(arr.map(e=>e.who)), opts=kind==="ind"?roster:UNITS;
+    $("#modalRoot").innerHTML=`<div class="scrim" id="scrim"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="vT">
+      <h3 id="vT">${v.n} · ${DAYS[i]}${m.start?" · "+fmt(addDays(m.start,i)):""}</h3>
+      <div class="vlist" id="vlist">${arr.length?arr.map((e,j)=>`<div class="vitem"><b>${esc(e.who)}</b><button class="st ${e.st}" data-j="${j}" title="Toggle planned / done">${e.st==="done"?"✓ Done":"P Planned"}</button><button class="rm" data-rm="${j}" aria-label="Remove">×</button></div>`).join(""):`<p class="histnote">Nothing planned yet. Pick a ${v.s} below.</p>`}</div>
+      <div class="addrow"><select id="vsel" aria-label="Add ${v.s}"><option value="">Add ${v.s}…</option>${opts.map(o=>`<option ${used.has(o)?"disabled":""}>${esc(o)}</option>`).join("")}</select><button class="btn" id="vadd">Add planned</button><button class="btn primary" id="vaddd">Add done</button></div>
+      <div id="rosterBox"><button class="btn" id="rosterEdit" style="font-size:12px">${kind==="ind"?"Edit squad list":"Edit unit list"}</button></div>
+      <div class="actions"><span></span><button class="btn primary" id="vclose">Done</button></div>
+    </div></div>`;
+    const add=st=>{const w=$("#vsel").value;if(!w)return;arr.push({who:w,st});draw();$("#vsel").focus()};
+    $("#vadd").onclick=()=>add("plan"); $("#vaddd").onclick=()=>add("done");
+    $("#vlist").onclick=e=>{const t=e.target.closest("button");if(!t)return;
+      if(t.dataset.j!==undefined){const x=arr[+t.dataset.j];x.st=x.st==="done"?"plan":"done";draw()}
+      else if(t.dataset.rm!==undefined){arr.splice(+t.dataset.rm,1);draw()}};
+    $("#vclose").onclick=close; $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
+    $("#rosterEdit").onclick=()=>{
+      const isInd=kind==="ind", cur=isInd?roster:UNITS;
+      $("#rosterBox").innerHTML=`<div class="field"><label for="rosterTa">${isInd?"Squad list, one player per line (number and name)":"Unit list, one unit per line (for example: Back line + GK)"}</label><textarea id="rosterTa" style="min-height:160px;font-family:var(--f-mono);font-size:12px">${esc(cur.join("\n"))}</textarea></div><p class="histnote">Renaming an item does not rename entries already logged in past weeks.</p><div class="actions"><button class="btn" id="rosterReset">Reset to default</button><button class="btn primary" id="rosterSave">Save list</button></div>`;
+      $("#rosterSave").onclick=()=>{const l=[...new Set($("#rosterTa").value.split("\n").map(x=>x.trim()).filter(Boolean))];if(l.length){if(isInd){roster=l;saveRoster()}else{UNITS=l;saveUnits()}}draw()};
+      $("#rosterReset").onclick=()=>{if(isInd){roster=ROSTER_DEFAULT.slice();saveRoster()}else{UNITS=UNITS_DEFAULT.slice();saveUnits()}draw()};
+    };
+  };
+  draw();
+  document.addEventListener("keydown",function k(e){if(e.key==="Escape"){close();document.removeEventListener("keydown",k)}});
 }
 
 /* ---------- day editor ---------- */
@@ -789,6 +880,7 @@ $("#view").addEventListener("click",e=>{
   if(t.id==="newMc")return newMicrocycle();
   if(t.id==="prev"||t.id==="next"){const l=sorted();const i=l.findIndex(x=>x._id===curId);const n=l[i+(t.id==="next"?1:-1)];if(n){curId=n._id;render()}return}
   if(t.dataset.day!==undefined)return openDay(+t.dataset.day);
+  if(t.dataset.vid)return openVideo(t.dataset.vid,+t.dataset.vday);
   if(t.dataset.key&&m&&!readOnly){m.marks=m.marks||{};cycleMark(m,t.dataset.key);save(m._id);
     const k=t.dataset.key; render(); const nb=document.querySelector(`button[data-key="${k}"]`); nb&&nb.focus();}
 });
@@ -813,7 +905,7 @@ function buildReportPdf(m){
   doc.addFileToVFS("LS-R.ttf",PDF_FONT_R);doc.addFont("LS-R.ttf","LS","normal");
   doc.addFileToVFS("LS-B.ttf",PDF_FONT_B);doc.addFont("LS-B.ttf","LS","bold");
   const C={ink:"#16171B",muted:"#5F636B",line:"#D3D6DA",head:"#F1F2F4",y:"#F5C400",yInk:"#1A1600",y1:"#FFF3BF",y2:"#F9DC66",plan:"#A88400",
-    off:"#2F5D8A",offS:"#E6EEF7",def:"#9B3B33",defS:"#F6E6E4",mt:"#3D7A48",mtS:"#E5F1E7",ok:"#2F7D4A",warn:"#B07400",bad:"#B4322A"};
+    off:"#2F5D8A",offS:"#E6EEF7",def:"#9B3B33",defS:"#F6E6E4",vid:"#6B4FA0",vidS:"#EFE9F7",mt:"#3D7A48",mtS:"#E5F1E7",ok:"#2F7D4A",warn:"#B07400",bad:"#B4322A"};
   const T=(s,x,y,o={})=>{doc.setFont("LS",o.b?"bold":"normal");let sz=o.s||7;doc.setFontSize(sz);
     if(o.w){while(sz>4.2&&doc.getTextWidth(String(s))>o.w){sz-=.3;doc.setFontSize(sz)}}
     doc.setTextColor(o.c||C.ink);doc.text(String(s),x,y,{align:o.a||"left",charSpace:o.cs||0})};
@@ -821,6 +913,7 @@ function buildReportPdf(m){
   const done=(cx,cy)=>{doc.setFillColor(C.y);doc.circle(cx,cy,1.8,"F");doc.setDrawColor(C.yInk);doc.setLineWidth(.35);doc.lines([[0.55,0.6],[1.15,-1.3]],cx-0.85,cy+0.05)};
   const plan=(cx,cy)=>{doc.setDrawColor(C.plan);doc.setLineWidth(.3);doc.setLineDashPattern([.5,.45],0);doc.circle(cx,cy,1.75,"S");doc.setLineDashPattern([],0);T("P",cx,cy+.85,{s:5.5,b:1,c:C.plan,a:"center"})};
   const M=10,W=277,R=M+W;
+  const short=w=>w.replace(/^\d+\s+/,"").replace("Midfielders line (4 players)","Mid line (4)");
   const list=sorted(), mi=list.findIndex(x=>x._id===m._id), real=list.slice(Math.max(0,mi-5),mi+1), hist=Array(6-real.length).fill(null).concat(real);
   const weekEnd=m.start?addDays(m.start,6):today();
   const ref=weekEnd<today()?weekEnd:today();
@@ -854,7 +947,7 @@ function buildReportPdf(m){
   T("Last 4",xL4+l4W/2,y0+9,{s:6.2,b:1,a:"center"});T("MC",xL4+l4W/2,y0+12.2,{s:6.2,b:1,a:"center"});
   T("Last worked",xLast+lastW/2,y0+10.6,{s:6.2,b:1,a:"center"});T("Status",xSt+stW/2,y0+10.6,{s:6.2,b:1,a:"center"});
   /* body */
-  const yb=160, gh=4.3, rows=PLAYS.length+1, rh=(yb-3-(y0+hh)-2*gh)/rows;
+  const yb=160, gh=4.0, rows=PLAYS.length+1+VIDEO.length, rh=(yb-3-(y0+hh)-3*gh)/rows;
   let y=y0+hh;
   const countFor=(mc,pid)=>{let dn=0,pl=0;for(const [k,v] of Object.entries(mc.marks||{})){if(k.split("|")[0]!==pid)continue;v==="done"?dn++:pl++}return [dn,pl]};
   const hline=yy=>{doc.setDrawColor(C.line);doc.setLineWidth(.15);doc.line(M,yy,xGap,yy);doc.line(xH(0),yy,R,yy)};
@@ -878,6 +971,28 @@ function buildReportPdf(m){
       y+=rh;hline(y);
     }
   }
+  /* video rows */
+  box(M,y,xGap-M,gh,C.vidS);box(xH(0),y,R-xH(0),gh,C.vidS);
+  T("VIDEO ANALYSIS",M+1.5,y+2.9,{s:6.3,b:1,c:C.vid,cs:.3});y+=gh;
+  for(const v of VIDEO){
+    doc.setFillColor(C.vid);doc.rect(M,y,.8,rh,"F");
+    T(v.n,M+2,y+rh*.66,{s:6.8,w:nameW-3});
+    m.days.forEach((d,i)=>{if(d.md==="MD")box(xDay(i),y,dayW,rh,C.mtS);
+      const arr=vEntries(m,v.id,i);if(!arr.length)return;
+      const sh=w=>v.id==="ind"?short(w):w.replace("Midfielders line (4 players)","Mid line (4)");
+      const dn=arr.filter(e=>e.st==="done").map(e=>sh(e.who)),pl=arr.filter(e=>e.st!=="done").map(e=>sh(e.who));
+      const cx=xDay(i)+dayW/2;
+      if(dn.length&&pl.length){T(dn.join(", "),cx,y+rh*.42,{s:5.2,a:"center",w:dayW-1.2});T("P: "+pl.join(", "),cx,y+rh*.84,{s:5.2,a:"center",w:dayW-1.2,c:C.plan})}
+      else if(dn.length)T(dn.join(", "),cx,y+rh*.66,{s:5.6,a:"center",w:dayW-1.2});
+      else T("P: "+pl.join(", "),cx,y+rh*.66,{s:5.6,a:"center",w:dayW-1.2,c:C.plan})});
+    hist.forEach((h,i)=>{if(!h)return;const [dn,pl]=vCount(h,v.id),cx=xH(i)+hW/2,bw=Math.min(hW-2,6),bh=rh-1.6;
+      if(dn){doc.setFillColor(dn<=2?C.y1:dn<=4?C.y2:C.y);doc.roundedRect(cx-bw/2,y+.8,bw,bh,.6,.6,"F");T(dn,cx,y+rh*.67,{s:6.2,b:1,a:"center",c:C.yInk})}
+      else if(pl){doc.setDrawColor(C.plan);doc.setLineWidth(.3);doc.roundedRect(cx-bw/2,y+.8,bw,bh,.6,.6,"S");T("P",cx,y+rh*.67,{s:5.8,b:1,a:"center",c:C.plan})}});
+    let r4=0;list.slice(Math.max(0,mi-3),mi+1).forEach(h=>r4+=vCount(h,v.id)[0]);
+    T(r4,xL4+l4W/2,y+rh*.67,{s:6.8,a:"center",c:r4?C.ink:C.muted});
+    const l=vLastDone(v.id,null,ref);if(l)T(fmt(l)+"  ·  "+diffDays(l,ref)+"d",xLast+lastW/2,y+rh*.67,{s:6.3,a:"center"});
+    y+=rh;hline(y);
+  }
   /* totals row */
   box(M,y,xGap-M,rh,C.head);box(xH(0),y,R-xH(0),rh,C.head);
   T("Total done  (OFF / DEF)",M+2,y+rh*.67,{s:6.5,b:1});
@@ -894,6 +1009,7 @@ function buildReportPdf(m){
   let offD=0,defD=0;const pending=[];
   for(const [k,v] of Object.entries(m.marks||{})){const [pid,d]=k.split("|");const p=PLAYS.find(x=>x.id===pid);if(!p)continue;
     if(v==="done"){p.g==="off"?offD++:defD++}else pending.push([+d,(p.g==="off"?"OFF  ":"DEF  ")+p.n+(p.s?" ("+p.s+")":"")+"  ·  "+DAYS[+d].slice(0,3)])}
+  for(const [k,arr] of Object.entries(m.video||{})){const [kind,d]=k.split("|");arr.forEach(e=>{if(e.st!=="done")pending.push([+d,"VIDEO  "+(kind==="ind"?short(e.who):e.who)+"  ·  "+DAYS[+d].slice(0,3)])})}
   pending.sort((a,b)=>a[0]-b[0]);
   const planned=new Set(Object.keys(m.marks||{}).map(k=>k.split("|")[0]));
   const wkRef=m.start||today();
@@ -904,8 +1020,8 @@ function buildReportPdf(m){
     const shown=arr.length>max?arr.slice(0,max-1):arr;shown.forEach((t,j)=>T("•  "+t,bx(i)+3,y1+j*3.3,{s:6.5,w:bw-6}));
     if(arr.length>max)T("+ "+(arr.length-max+1)+" more",bx(i)+3,y1+(max-1)*3.3,{s:6.5,c:C.muted})};
   card(0,"WEEK SUMMARY");
-  [[offD,"Offensive done",C.off],[defD,"Defensive done",C.def],[pending.length,"Planned, not done",C.plan]].forEach(([n,l,c],j)=>{
-    T(n,bx(0)+3+j*21,yb+14,{s:16,b:1,c});T(l,bx(0)+3+j*21,yb+17.6,{s:5.6,c:C.muted})});
+  [[offD,"Offensive done",C.off],[defD,"Defensive done",C.def],[vCount(m,"ind")[0]+vCount(m,"grp")[0],"Video done",C.vid],[pending.length,"Planned, not done",C.plan]].forEach(([n,l,c],j)=>{
+    T(n,bx(0)+3+j*15.5,yb+14,{s:15,b:1,c});T(l,bx(0)+3+j*15.5,yb+17.6,{s:5.2,c:C.muted,w:15})});
   const mts=m.days.map((d,i)=>({d,i})).filter(x=>x.d.md==="MD"&&x.d.match);
   T("MATCHES",bx(0)+3,yb+23,{s:6,b:1,c:C.muted,cs:.3});
   if(mts.length)mts.slice(0,3).forEach((x,j)=>{const t=x.d.match;T(DAYS[x.i].slice(0,3)+"  "+(t.comp||"")+(t.round?" "+t.round:"")+":  "+(t.home||"")+" vs "+(t.away||"")+(t.score?"  "+t.score:""),bx(0)+3,yb+26.6+j*3.3,{s:6.3,w:bw-6})});
@@ -921,7 +1037,7 @@ function buildReportPdf(m){
   const fy=yb+bh+5;
   done(M+1.8,fy-1);T("Done",M+5,fy,{s:6.3,c:C.muted});plan(M+17,fy-1);T("Planned",M+20.2,fy,{s:6.3,c:C.muted});
   box(M+33,fy-2.7,4,3.2,C.mtS);T("Match day",M+38.5,fy,{s:6.3,c:C.muted});
-  T("History numbers = blocks done per microcycle.  Status from last block to "+fmt(ref)+":  OK up to "+WATCH+" days,  Watch up to "+GAP+",  Gap beyond "+GAP+".",M+55,fy,{s:6.3,c:C.muted});
+  T("Video: names = done, P: = planned.  History numbers = blocks done per microcycle.  Status from last block to "+fmt(ref)+":  OK up to "+WATCH+" days,  Watch up to "+GAP+",  Gap beyond "+GAP+".",M+55,fy,{s:6.3,c:C.muted});
   T("AEK Set Plays Planner",R,fy,{s:6.3,c:C.muted,a:"right"});
   return doc;
 }
