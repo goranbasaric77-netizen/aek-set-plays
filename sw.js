@@ -1,6 +1,6 @@
 // AEK Set - Plays service worker. Bump CACHE on every release.
 // Does not touch localStorage, so coaches' data survives updates.
-const CACHE = "aek-setplays-2026-11-19";
+const CACHE = "aek-setplays-2026-11-19b";
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png", "./logo.png", "./board.js"];
 
 self.addEventListener("install", e => {

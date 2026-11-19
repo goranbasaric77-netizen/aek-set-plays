@@ -150,7 +150,7 @@
   }
 
   /* ───────── player photos ─────────
-     heads/<key>.webp is the player's head on a transparent background (cut from the Player Hub portraits); heads/_grb.png is the crest.
+     heads/<key>.webp is the player's head on a transparent background (cut from the Player Hub portraits); heads/aek-crest.png is the crest (no leading underscore: GitHub Pages skips such files).
      A photo is fetched once and kept as a data URL, because the exported picture can only carry embedded images. */
   const PHOTO_FILES = ["alexiou", "argyriou", "ariaga", "balamotis", "brignoli", "christakopoulos", "gacinovic", "georgiev", "joaomario", "jovic", "kairinen",
     "kaloskamis", "koita", "kutesa", "likogiannis", "majer", "mantalos", "marin", "moukoudi", "pilios", "relvas", "rota", "sahabo", "strakosha", "varga", "vida",
@@ -167,7 +167,7 @@
     if (!k || (board && board.photos === false && k !== "grb")) return "";
     if (!photos[k]) {
       photos[k] = "wait";
-      fetch(k === "grb" ? "heads/_grb.png" : "heads/" + k + ".webp").then((r) => (r.ok ? r.blob() : Promise.reject())).then((b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); }))
+      fetch(k === "grb" ? "heads/aek-crest.png" : "heads/" + k + ".webp").then((r) => (r.ok ? r.blob() : Promise.reject())).then((b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); }))
         .then((url) => { photos[k] = url; draw(); }).catch(() => { photos[k] = "none"; });
     }
     return photos[k].startsWith("data:") ? photos[k] : "";
