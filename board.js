@@ -282,7 +282,7 @@
   }
 
   /* ───────── drawing the stage ───────── */
-  function stageSvg(forExport) {
+  function stageSvg(forExport, noTitle) {
     const { svg: pitch, C } = pitchSvg(), items = board.items, isSel = (it) => !forExport && sel === it.id;
     let s = DEFS + pitch;
     s += items.filter((i) => i.t === "z").map((i) => zoneSvg(i, isSel(i))).join("");
@@ -292,7 +292,7 @@
     s += items.filter((i) => i.t === "a" && i.kind === "air").map((i) => arrowSvg(i, isSel(i))).join("");
     s += items.filter((i) => i.t === "t").map((i) => textSvg(i, isSel(i))).join("");
     if (!forExport) { const it = items.find((i) => i.id === sel); if (it) s += handlesSvg(it); }
-    if (forExport) {
+    if (forExport && !noTitle) {
       const title = [playName(board.play), board.name, board.opponent ? "vs " + board.opponent : ""].filter(Boolean).join("  ·  ");
       s += `<rect x="0" y="${H - 34}" width="${W}" height="34" fill="rgba(255,255,255,.88)"/><text x="16" y="${H - 12}" font-size="16" font-weight="700" fill="#16171b" font-family="Arial, sans-serif">${esc(title)}</text>
         <text x="${W - 16}" y="${H - 12}" font-size="13" text-anchor="end" fill="#666a72" font-family="Arial, sans-serif">AEK Athens FC · Set plays</text>`;
@@ -466,6 +466,68 @@
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   }
 
+  /* ───────── PDF of the drawings (the "PDF report" button on the Drawing board tab) ─────────
+     One A4 landscape page per variation of the selected set play: club header, the drawing, the notes. Same fonts and crest
+     as the app's Set Plays Report (PDF_FONT_R, PDF_FONT_B, PDF_LOGO from index.html, when present). */
+  function loadPhoto(k) {
+    if (photos[k] && photos[k].startsWith("data:")) return Promise.resolve();
+    return fetch(k === "grb" ? "heads/aek-crest.png" : "heads/" + k + ".webp").then((r) => (r.ok ? r.blob() : Promise.reject()))
+      .then((b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); }))
+      .then((url) => { photos[k] = url; }).catch(() => { photos[k] = "none"; });
+  }
+  function boardPng(b) {
+    const keep = board; board = b;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W * 2}" height="${H * 2}"><style>.sb-name{font-family:Arial,Helvetica,sans-serif;fill:#2b2c30;paint-order:stroke;stroke:#fff;stroke-width:3px}.sb-note{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#16171b}</style>${stageSvg(true, true)}</svg>`;
+    board = keep;
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => { const c = document.createElement("canvas"); c.width = W * 2; c.height = H * 2; c.getContext("2d").drawImage(img, 0, 0); res(c.toDataURL("image/jpeg", 0.92)); };
+      img.onerror = () => rej(new Error("the drawing could not be turned into a picture"));
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
+  }
+  async function pdf() {
+    const say = (s) => { if (typeof setStatus === "function") setStatus(s); };
+    if (!window.jspdf) return say("Could not create the PDF (PDF library missing).");
+    const list = store.list.filter((b) => b.play === board.play);
+    if (!list.length) return say("There is no drawing for this set play yet.");
+    say("Creating the PDF…");
+    try {
+      const keys = new Set(["grb"]);
+      list.forEach((b) => b.items.forEach((i) => { if (i.t === "p" && (i.team === "aek" || i.team === "gk")) { const k = photoKey(i.name); if (k) keys.add(k); } }));
+      await Promise.all([...keys].map(loadPhoto));
+      const { jsPDF } = window.jspdf, doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      let F = "helvetica";
+      if (typeof PDF_FONT_R !== "undefined" && typeof PDF_FONT_B !== "undefined") {
+        doc.addFileToVFS("LS-R.ttf", PDF_FONT_R); doc.addFont("LS-R.ttf", "LS", "normal");
+        doc.addFileToVFS("LS-B.ttf", PDF_FONT_B); doc.addFont("LS-B.ttf", "LS", "bold"); F = "LS";
+      }
+      const T = (s, x, y, o = {}) => { doc.setFont(F, o.b ? "bold" : "normal"); doc.setFontSize(o.s || 9); doc.setTextColor(o.c || "#16171B"); doc.text(String(s), x, y, { align: o.a || "left", maxWidth: o.w }); };
+      const play = playName(board.play), group = groups()[(plays().find((p) => p.id === board.play) || {}).g] || "";
+      const made = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i];
+        if (i) doc.addPage();
+        if (typeof PDF_LOGO !== "undefined") { try { doc.addImage(PDF_LOGO, "PNG", 10, 7, 10.5, 14); } catch (e) { /* no crest */ } }
+        T("AEK ATHENS FC  ·  PERFORMANCE DEPARTMENT", 24, 11, { s: 7.5, b: 1, c: "#5F636B" });
+        T("SET PLAY  ·  " + play.toUpperCase(), 24, 19, { s: 16, b: 1 });
+        T(group, 287, 11, { s: 7.5, b: 1, c: "#5F636B", a: "right" });
+        T((b.name || "Variation " + (i + 1)) + (b.opponent ? "  ·  vs " + b.opponent : ""), 287, 18.5, { s: 11, b: 1, a: "right" });
+        doc.setFillColor("#F5C400"); doc.rect(10, 23.5, 277, 1.1, "F");
+        const png = await boardPng(b), h = (277 * H) / W;
+        doc.addImage(png, "JPEG", 10, 27, 277, h);
+        doc.setDrawColor("#D3D6DA"); doc.setLineWidth(0.25); doc.rect(10, 27, 277, h, "S");
+        const y = 27 + h + 6;
+        if (b.notes && b.notes.trim()) { T("NOTES", 10, y, { s: 7.5, b: 1, c: "#5F636B" }); T(b.notes.trim(), 10, y + 5, { s: 9.5, w: 277 }); }
+        T("AEK Athens FC · Set plays · " + made + (list.length > 1 ? "  ·  " + (i + 1) + " / " + list.length : ""), 287, 203, { s: 7, c: "#5F636B", a: "right" });
+      }
+      const name = ("AEK Set play " + play).replace(/[^\w\- ]+/g, "").replace(/\s+/g, " ").trim() + ".pdf";
+      const url = URL.createObjectURL(doc.output("blob")), a = document.createElement("a");
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+      say("PDF created: " + name + " · " + list.length + (list.length === 1 ? " drawing" : " drawings"));
+    } catch (e) { console.error(e); say("Could not create the PDF (" + e.message + ")."); }
+  }
+
   /* ───────── wiring ───────── */
   function open(b) { board = b; store.cur = b.id; sel = null; undo = []; redo = []; persist(); redraw(true); }
   function bind() {
@@ -576,6 +638,7 @@
     },
     unmount() { host = null; document.removeEventListener("keydown", keys); },
     dump() { load(); return store; },
+    pdf() { if (!board) { load(); board = store.list.find((b) => b.id === store.cur) || store.list[store.list.length - 1]; } return board ? pdf() : setStatus("There is no drawing yet."); },
     restore(data) { if (data && Array.isArray(data.list)) { store = data; persist(); } },
   };
 })();

@@ -871,6 +871,7 @@ function openDay(i){
 /* ---------- render + events ---------- */
 function render(){
   $("#tab-plan").setAttribute("aria-selected",tab==="plan"); $("#tab-hist").setAttribute("aria-selected",tab==="hist"); $("#tab-board").setAttribute("aria-selected",tab==="board");
+  $("#btnPdf").textContent=tab==="board"?"PDF drawings":"PDF report";
   if(!loaded){ $("#view").innerHTML=`<div class="empty"><h2>Loading set plays</h2><p>Loading your microcycles.</p></div>`; return; }
   const ae=document.activeElement, keepNotes=ae&&ae.id==="notes";
   if(keepNotes)return; // do not disturb typing
@@ -1067,7 +1068,7 @@ function makePdf(){
   render();
 })();
 $("#btnExport").onclick=exportData;
-$("#btnPdf").onclick=makePdf;
+$("#btnPdf").onclick=()=>tab==="board"?SPBoard.pdf():makePdf(); // Drawing board: PDF of the drawings
 $("#btnImport").onclick=()=>$("#fileIn").click();
 $("#fileIn").onchange=e=>{const f=e.target.files[0];if(f)importData(f);e.target.value=""};
 </script>
