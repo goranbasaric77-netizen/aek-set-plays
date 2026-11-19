@@ -87,7 +87,7 @@
 
   /* ───────── state ───────── */
   let store = { list: [], cur: null };
-  let board = null, sel = null, tool = "select", armed = null, side = 1, host = null, dragging = null, undo = [], redo = [], saveT = null, raf = 0;
+  let board = null, sel = null, tool = "select", armed = null, armedPose = null, curPose = "p00", poseGroup = "Standing", side = 1, host = null, dragging = null, undo = [], redo = [], saveT = null, raf = 0;
   function load() { try { const j = JSON.parse(localStorage.getItem(BOARD_KEY) || "null"); if (j && Array.isArray(j.list)) store = j; } catch (e) { /* keep empty */ } }
   function persist() {
     try { localStorage.setItem(BOARD_KEY, JSON.stringify(store)); if (typeof setStatus === "function") setStatus("Drawing saved on this computer · " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })); }
@@ -149,30 +149,6 @@
     return s;
   }
 
-  /* ───────── player photos ─────────
-     heads/<key>.webp is the player's head on a transparent background (cut from the Player Hub portraits); heads/aek-crest.png is the crest (no leading underscore: GitHub Pages skips such files).
-     A photo is fetched once and kept as a data URL, because the exported picture can only carry embedded images. */
-  const PHOTO_FILES = ["alexiou", "argyriou", "ariaga", "balamotis", "brignoli", "christakopoulos", "gacinovic", "georgiev", "joaomario", "jovic", "kairinen",
-    "kaloskamis", "koita", "kutesa", "likogiannis", "majer", "mantalos", "marin", "moukoudi", "pilios", "relvas", "rota", "sahabo", "strakosha", "varga", "vida",
-    "vitalis", "zine", "zubkov"];
-  const PHOTO_ALIAS = { arriaga: "ariaga", lykogiannis: "likogiannis", zini: "zine" };       // squad list spelling -> file name
-  const photos = {};                                                                           // key -> data URL | "wait" | "none"
-  function photoKey(name) {
-    const k = String(name || "").toLowerCase().normalize("NFD").replace(/[^a-z]/g, "");
-    const f = PHOTO_ALIAS[k] || k;
-    return PHOTO_FILES.includes(f) || f === "grb" ? f : "";
-  }
-  function photoOf(name) {
-    const k = photoKey(name);
-    if (!k || (board && board.photos === false && k !== "grb")) return "";
-    if (!photos[k]) {
-      photos[k] = "wait";
-      fetch(k === "grb" ? "heads/aek-crest.png" : "heads/" + k + ".webp").then((r) => (r.ok ? r.blob() : Promise.reject())).then((b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); }))
-        .then((url) => { photos[k] = url; draw(); }).catch(() => { photos[k] = "none"; });
-    }
-    return photos[k].startsWith("data:") ? photos[k] : "";
-  }
-
   /* ───────── figures ───────── */
   /* ───────── player figure: the shape Goran sent on 19.11.2026 (cartoon player from the front) ─────────
      V-neck shirt with black stripes and short sleeves with black cuffs, arms hanging to mid-thigh, black shorts to above the knee,
@@ -201,10 +177,9 @@
     collar: "M-6.6 -95.6 L0 -88.6 L6.6 -95.6 L5.1 -96 L0 -90.6 L-5.1 -96 Z",
     neck: "M-2.9 -99.6 L2.9 -99.6 L3.3 -93.6 L0 -90.6 L-3.3 -93.6 Z",
   };
-  function figureSvg(it, selected) {
+  function drawnSvg(it, selected) {                       // stands in while the pose picture loads
     const [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG) / 104, o = "#26272b", skin = "#ecbf98", kit = KIT[it.team] || KIT.aek, F = FIG_PATH;
-    const photo = it.team === "aek" || it.team === "gk" ? photoOf(it.name) : "";
-    const crest = it.team === "aek" ? photoOf("_grb") : "";
+    const photo = "", crest = "";
     const line = (d, fill, w) => `<path d="${d}" fill="${fill}" stroke="${o}" stroke-width="${w || 1.1}" stroke-linejoin="round"/>`;
     const shade = (d) => `<path d="${d}" fill="url(#sbShade)"/>`;
     const head = photo
@@ -225,6 +200,72 @@
     const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy + 1).toFixed(1)}" rx="${(24 * k).toFixed(1)}" ry="${(7.8 * k).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
     return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}<g transform="translate(${sx.toFixed(1)},${sy.toFixed(1)}) scale(${k.toFixed(3)})">${body}</g>
       <rect x="${(sx - 18 * k).toFixed(1)}" y="${(sy - 119 * k).toFixed(1)}" width="${(36 * k).toFixed(1)}" height="${(121 * k).toFixed(1)}" fill="transparent"/>${label}</g>`;
+  }
+  /* ───────── player figures: poses (Goran's sheet of 69 figures, 19.11.2026) ─────────
+     In a set play what matters is which way a player faces and what the arms and body do, so every figure is a pose picture
+     (poses/pNN.webp, AEK kit, transparent background). A player keeps its pose (it.pose) and can be mirrored (it.flip).
+     Other teams get the same picture recoloured in a canvas: the yellow of the kit becomes red (opponent), green (keeper)
+     or blue (opponent keeper). Pictures are kept as data URLs, because the exported picture and the PDF can only carry
+     embedded images. While a picture loads, the drawn figure stands in. */
+  const POSES = [{"id":"p00","w":69,"h":223,"g":"Standing","n":"Front"},{"id":"p01","w":51,"h":220,"g":"Standing","n":"Side right"},{"id":"p02","w":49,"h":220,"g":"Standing","n":"Side right 2"},{"id":"p03","w":73,"h":221,"g":"Standing","n":"Back"},{"id":"p04","w":65,"h":222,"g":"Standing","n":"Back 2"},{"id":"p05","w":55,"h":221,"g":"Standing","n":"Back three-quarter"},{"id":"p06","w":64,"h":220,"g":"Standing","n":"Side three-quarter"},{"id":"p07","w":47,"h":221,"g":"Standing","n":"Side left"},{"id":"p08","w":95,"h":223,"g":"Arms and signals","n":"Hands on hips"},{"id":"p09","w":72,"h":222,"g":"Arms and signals","n":"Arms crossed"},{"id":"p10","w":75,"h":221,"g":"Arms and signals","n":"Thinking"},{"id":"p11","w":111,"h":218,"g":"Arms and signals","n":"Arm out"},{"id":"p12","w":133,"h":212,"g":"Arms and signals","n":"Pointing"},{"id":"p13","w":86,"h":230,"g":"Arms and signals","n":"Arm up"},{"id":"p14","w":92,"h":225,"g":"Arms and signals","n":"Arm up, side"},{"id":"p15","w":141,"h":208,"g":"Arms and signals","n":"Arms open"},{"id":"p16","w":122,"h":171,"g":"Running","n":"Sprint"},{"id":"p17","w":125,"h":177,"g":"Running","n":"Sprint 2"},{"id":"p18","w":90,"h":184,"g":"Running","n":"Run"},{"id":"p19","w":79,"h":184,"g":"On the ball","n":"Ball at feet"},{"id":"p20","w":68,"h":183,"g":"On the ball","n":"Dribble"},{"id":"p21","w":105,"h":175,"g":"On the ball","n":"Dribble 2"},{"id":"p22","w":187,"h":169,"g":"On the ball","n":"Shot"},{"id":"p23","w":94,"h":187,"g":"On the ball","n":"Knee up"},{"id":"p24","w":93,"h":188,"g":"On the ball","n":"Juggling"},{"id":"p25","w":87,"h":172,"g":"On the ball","n":"Juggling knee"},{"id":"p26","w":64,"h":179,"g":"On the ball","n":"Ready"},{"id":"p27","w":58,"h":175,"g":"Jumping","n":"Header"},{"id":"p28","w":113,"h":173,"g":"Jumping","n":"Jump"},{"id":"p29","w":105,"h":179,"g":"Jumping","n":"Jump 2"},{"id":"p30","w":107,"h":145,"g":"Defending","n":"Defensive stance"},{"id":"p31","w":126,"h":137,"g":"Defending","n":"Lunge"},{"id":"p32","w":81,"h":142,"g":"Defending","n":"Hands on knees"},{"id":"p33","w":195,"h":102,"g":"On the ground","n":"Sliding"},{"id":"p34","w":127,"h":98,"g":"On the ground","n":"Sitting"},{"id":"p35","w":109,"h":72,"g":"On the ground","n":"Lying back"},{"id":"p36","w":137,"h":60,"g":"On the ground","n":"Lying side"},{"id":"p37","w":62,"h":81,"g":"On the ground","n":"Hands on head"},{"id":"p38","w":72,"h":111,"g":"On the ground","n":"Kneeling up"},{"id":"p39","w":69,"h":111,"g":"On the ground","n":"Kneeling"},{"id":"p40","w":67,"h":96,"g":"On the ground","n":"Kneeling down"},{"id":"p41","w":77,"h":133,"g":"On the ground","n":"Bent over"},{"id":"p42","w":86,"h":104,"g":"On the ground","n":"Tying boots"},{"id":"p43","w":75,"h":105,"g":"On the ground","n":"Sitting knees"},{"id":"p44","w":104,"h":177,"g":"Arms and signals","n":"Pointing 2"},{"id":"p45","w":108,"h":174,"g":"Arms and signals","n":"Pointing far"},{"id":"p46","w":124,"h":172,"g":"Arms and signals","n":"Arms open 2"},{"id":"p47","w":56,"h":175,"g":"Arms and signals","n":"Clapping"},{"id":"p48","w":56,"h":173,"g":"Arms and signals","n":"Clapping 2"},{"id":"p49","w":73,"h":180,"g":"Arms and signals","n":"Hand up"},{"id":"p50","w":60,"h":193,"g":"Arms and signals","n":"Arm up straight"},{"id":"p51","w":75,"h":198,"g":"Arms and signals","n":"Both arms up"},{"id":"p52","w":68,"h":192,"g":"Arms and signals","n":"Arms over head"},{"id":"p53","w":65,"h":195,"g":"Arms and signals","n":"Arms crossed X"},{"id":"p54","w":78,"h":180,"g":"Arms and signals","n":"Hand on head"},{"id":"p55","w":65,"h":182,"g":"Arms and signals","n":"Hands on face"},{"id":"p56","w":78,"h":189,"g":"Arms and signals","n":"Drinking"},{"id":"p57","w":70,"h":186,"g":"Arms and signals","n":"Towel"},{"id":"p58","w":83,"h":187,"g":"Arms and signals","n":"Ball under arm"},{"id":"p59","w":64,"h":140,"g":"Stretching","n":"Quad stretch"},{"id":"p60","w":82,"h":103,"g":"Stretching","n":"Hamstring"},{"id":"p61","w":143,"h":114,"g":"Stretching","n":"Lunge stretch"},{"id":"p62","w":142,"h":101,"g":"Stretching","n":"Groin stretch"},{"id":"p63","w":76,"h":130,"g":"Stretching","n":"Arm stretch"},{"id":"p64","w":49,"h":128,"g":"Stretching","n":"Triceps"},{"id":"p65","w":82,"h":130,"g":"Stretching","n":"Side stretch"},{"id":"p66","w":176,"h":76,"g":"Stretching","n":"Push-up"},{"id":"p67","w":181,"h":93,"g":"Stretching","n":"Cobra"},{"id":"p68","w":206,"h":47,"g":"Stretching","n":"Lying front"}];
+  const POSE = Object.fromEntries(POSES.map((p) => [p.id, p]));
+  const POSE_GROUPS = [...new Set(POSES.map((p) => p.g))];
+  const POSE_H = 220;                                        // pixel height of a standing figure = FIG metres (plus the head)
+  const TINT = { gk: [46, 170, 74], opp: [214, 45, 45], oppgk: [44, 128, 222] };
+  const poseImg = {};                                        // "pNN|team" -> data URL | "wait" | "none"
+  const poseOf = (it) => (POSE[it.pose] ? it.pose : "p00");
+  function tint(img, team) {
+    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+    const t = TINT[team];
+    if (t) {
+      const d = x.getImageData(0, 0, c.width, c.height), a = d.data;
+      for (let i = 0; i < a.length; i += 4) {
+        const r = a[i], g = a[i + 1], b = a[i + 2];
+        if (!a[i + 3] || r < 90 || g < 70 || r - b < 60 || g - b < 45) continue;   // not the yellow of the kit
+        const v = Math.min(1.25, (r + g) / 440), m = Math.min(1, (Math.min(r, g) - b) / 150);  // brightness, how yellow it is
+        for (let k = 0; k < 3; k++) a[i + k] = Math.round(Math.min(255, (t[k] * v) * m + a[i + k] * (1 - m)));
+      }
+      x.putImageData(d, 0, 0);
+    }
+    return c.toDataURL("image/png");
+  }
+  function loadPose(id, team) {
+    const key = id + "|" + (TINT[team] ? team : "aek");
+    if (poseImg[key] && poseImg[key] !== "wait") return Promise.resolve();
+    poseImg[key] = "wait";
+    return new Promise((res) => {
+      const img = new Image();
+      img.onload = () => { try { poseImg[key] = tint(img, team); } catch (e) { poseImg[key] = "none"; } res(); };
+      img.onerror = () => { poseImg[key] = "none"; res(); };
+      img.src = "poses/" + id + ".webp";
+    });
+  }
+  function poseUrl(id, team) {
+    const key = id + "|" + (TINT[team] ? team : "aek"), v = poseImg[key];
+    if (!v) { loadPose(id, team).then(draw); return ""; }
+    return v.startsWith("data:") ? v : "";
+  }
+  const loadPoses = (list) => Promise.all(list.flatMap((b) => b.items.filter((i) => i.t === "p").map((i) => loadPose(poseOf(i), i.team))));
+
+  function figureSvg(it, selected) {
+    const id = poseOf(it), p = POSE[id], url = poseUrl(id, it.team);
+    if (!url) return drawnSvg(it, selected);
+    const [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
+    const fs = clamp(scale() * 0.78, 12, 21);
+    const label = it.name ? `<text x="${sx.toFixed(1)}" y="${(sy - h - 6).toFixed(1)}" text-anchor="middle" font-size="${fs.toFixed(1)}" class="sb-name">${esc(it.name)}</text>` : "";
+    const rx = Math.max(w * 0.42, 14 * k * 1.9);
+    const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${(rx + 6).toFixed(1)}" ry="${((rx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
+    const shadow = `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${rx.toFixed(1)}" ry="${(rx * 0.26).toFixed(1)}" fill="rgba(0,0,0,.17)"/>`;
+    const tr = it.flip ? `translate(${(sx * 2).toFixed(1)},0) scale(-1,1)` : "";
+    return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}${shadow}<image href="${url}" x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"${tr ? ` transform="${tr}"` : ""}/>
+      <rect x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="transparent"/>${label}</g>`;
+  }
+  function posesHtml() {
+    const it = board.items.find((i) => i.id === sel && i.t === "p"), cur = it ? poseOf(it) : curPose;
+    return `<div class="sb-row">${POSE_GROUPS.map((g) => `<button class="sb-chip ${poseGroup === g ? "on" : ""}" data-pgroup="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+      <div class="sb-poses">${POSES.filter((p) => p.g === poseGroup).map((p) => `<button class="sb-pose ${cur === p.id ? "on" : ""} ${armedPose === p.id ? "armed" : ""}" data-pose="${p.id}" title="${esc(p.n)}" aria-label="${esc(p.n)}"><img src="poses/${p.id}.webp" alt="" loading="lazy" draggable="false"></button>`).join("")}</div>
+      <p class="sb-muted">${it ? "Click a figure to change the pose of " + esc(it.name || "the selected player") + "." : "Click a figure, then the pitch to place it. Select a player to change its pose."}</p>`;
   }
   function ballSvg(it, selected) {
     const [sx, sy] = proj(it.x, it.y, 0), r = clamp(scale() * 0.4, 4.5, 11);
@@ -345,9 +386,9 @@
             <label class="sb-sl"><span>Width</span><input type="range" id="sbEl" min="22" max="90" step="1" title="Tilt of the camera: higher makes the pitch wider from touchline to touchline" value="${Math.round(board.cam.el)}"></label>
             <label class="sb-sl"><span>Stretch</span><input type="range" id="sbKx" min="1" max="2.2" step="0.02" value="${board.cam.kx || 1}" title="Stretches the pitch sideways to fill the board (1 = true proportions)"></label>
             <label class="sb-sl"><span>Zoom</span><input type="range" id="sbZoom" min="0.4" max="3.2" step="0.02" value="${board.cam.zoom}"></label>
-            <div class="sb-row"><button class="sb-chip ${board.photos !== false ? "on" : ""}" data-photos="1">Player faces</button><button class="sb-chip ${board.photos === false ? "on" : ""}" data-photos="0">Drawn faces</button></div>
             <div class="sb-row"><button class="sb-chip ${board.style !== "grass" ? "on" : ""}" data-style="paper">White pitch</button><button class="sb-chip ${board.style === "grass" ? "on" : ""}" data-style="grass">Green pitch</button></div></section>
           <section id="sbInspect"></section>
+          <section><h3>Figures <small>pose · F flips</small></h3><div id="sbPoses"></div></section>
           <section><h3>Squad <small>click a name, then the pitch</small></h3><div class="sb-squad" id="sbSquad"></div></section>
           <section><h3>Start from a shape</h3><div class="sb-row"><button class="sb-chip ${side > 0 ? "on" : ""}" data-side="1">Right side</button><button class="sb-chip ${side < 0 ? "on" : ""}" data-side="-1">Left side</button></div>
             <div class="sb-views">${TEMPLATES.map((t) => `<button class="sb-chip" data-tpl="${t.id}">${esc(t.n)}</button>`).join("")}</div></section>
@@ -365,7 +406,8 @@
     const del = `<button class="btn danger sb-ib" data-act="del">${ic("trash")}<span>Delete</span></button>`;
     const sw = (set, cur, attr) => Object.keys(set).map((k) => `<button class="sb-sw ${cur === k ? "on" : ""}" data-${attr}="${k}" style="--c:${Array.isArray(set[k]) ? set[k][1] : set[k]}" aria-label="${k}"></button>`).join("");
     if (it.t === "p") return `<h3>Player</h3><input id="sbPName" list="sbNames" maxlength="24" value="${esc(it.name)}" placeholder="Name"><datalist id="sbNames">${squad().map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
-      <div class="sb-row">${[["aek", "AEK"], ["gk", "Goalkeeper"], ["opp", "Opponent"], ["oppgk", "Opp. GK"]].map(([k, n]) => `<button class="sb-chip ${it.team === k ? "on" : ""}" data-team="${k}">${n}</button>`).join("")}</div>${del}`;
+      <div class="sb-row">${[["aek", "AEK"], ["gk", "Goalkeeper"], ["opp", "Opponent"], ["oppgk", "Opp. GK"]].map(([k, n]) => `<button class="sb-chip ${it.team === k ? "on" : ""}" data-team="${k}">${n}</button>`).join("")}</div>
+      <div class="sb-row"><button class="sb-chip" data-act="flip" title="Mirror the figure (F)">⇆ Turn the other way</button><span class="sb-muted sb-pn">${esc(POSE[poseOf(it)].n)}</span></div>${del}`;
     if (it.t === "a") return `<h3>Arrow</h3><div class="sb-row">${Object.keys(KINDS).map((k) => `<button class="sb-chip ${it.kind === k ? "on" : ""}" data-kind="${k}">${KINDS[k].n}</button>`).join("")}</div>
       <div class="sb-row">${sw(INK, it.color, "color")}</div><p class="sb-muted">Drag the middle point to bend the line.</p>${del}`;
     if (it.t === "z") return `<h3>Zone</h3><div class="sb-row">${sw(ZONE, it.color, "zcolor")}</div><p class="sb-muted">Drag the two points to change its size.</p>${del}`;
@@ -376,14 +418,15 @@
     if (!host) return;
     host.querySelector("#sbInspect").innerHTML = inspectHtml();
     host.querySelector("#sbSquad").innerHTML = squadHtml();
+    host.querySelector("#sbPoses").innerHTML = posesHtml();
     host.querySelectorAll("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === tool)));
     const picked = board.items.find((i) => i.id === sel); if (picked && picked.t === "a") ink = picked.color;
     host.querySelectorAll("[data-ink]").forEach((b) => b.classList.toggle("on", b.dataset.ink === ink));
     const t = TOOLS.find((x) => x && x[0] === tool);
-    host.querySelector("#sbHint").textContent = armed ? `Click the pitch to place ${armed}` : t ? t[2] : "";
+    host.querySelector("#sbHint").textContent = armed ? `Click the pitch to place ${armed}` : armedPose ? `Click the pitch to place the figure (${POSE[armedPose].n})` : t ? t[2] : "";
   }
   function redraw(full) { if (!host) return; if (full) { host.innerHTML = shell(); bind(); } refreshSide(); draw(); }
-  function setTool(t) { tool = t; armed = null; if (t !== "select") sel = null; refreshSide(); draw(); }
+  function setTool(t) { tool = t; armed = null; armedPose = null; if (t !== "select") sel = null; refreshSide(); draw(); }
 
   /* ───────── pointer work ───────── */
   function stagePoint(e) { const r = host.querySelector("#sbSvg").getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H]; }
@@ -392,7 +435,7 @@
     if (e.button && e.button !== 0) return;
     const svg = host.querySelector("#sbSvg"), g = ground(e), h = e.target.closest("[data-h]"), node = e.target.closest("[data-id]");
     try { svg.setPointerCapture(e.pointerId); } catch (g) { /* pointer already gone: dragging still works while it stays over the pitch */ }
-    if (armed) { snapshot(); const it = P("aek", g[0], g[1], armed); board.items.push(it); sel = it.id; armed = null; tool = "select"; touch(); refreshSide(); draw(); return; }
+    if (armed || armedPose) { snapshot(); const it = P("aek", g[0], g[1], armed || nextName()); it.pose = curPose; board.items.push(it); armedPose = null; sel = it.id; armed = null; tool = "select"; touch(); refreshSide(); draw(); return; }
     if (tool === "select") {
       if (h && sel) { snapshot(); dragging = { kind: "handle", key: h.dataset.h, id: sel }; return; }
       if (node) {
@@ -403,7 +446,7 @@
     }
     if (["aek", "opp", "gk"].includes(tool)) {
       snapshot(); const n = tool === "aek" ? nextName() : tool === "gk" ? gkName() : "";
-      const it = P(tool, g[0], g[1], n); board.items.push(it); sel = it.id; dragging = { kind: "move", id: it.id, g0: g, orig: { ...it }, moved: true }; touch(); refreshSide(); draw(); return;
+      const it = P(tool, g[0], g[1], n); it.pose = curPose; board.items.push(it); sel = it.id; dragging = { kind: "move", id: it.id, g0: g, orig: { ...it }, moved: true }; touch(); refreshSide(); draw(); return;
     }
     if (tool === "ball") { snapshot(); board.items = board.items.filter((i) => i.t !== "b"); const it = { id: uid(), t: "b", x: g[0], y: g[1] }; board.items.push(it); sel = it.id; touch(); refreshSide(); draw(); return; }
     if (tool === "text") {                                 // the note is typed in the side panel (no pop-up: it does not exist in every browser)
@@ -445,6 +488,7 @@
   }
   function nextName() { const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)); return squad().find((n) => !used.has(n) && n !== gkName()) || ""; }
   function syncSliders() { const c = board.cam; [["#sbAz", c.az], ["#sbEl", c.el], ["#sbZoom", c.zoom], ["#sbKx", c.kx || 1]].forEach(([q, v]) => { const el = host.querySelector(q); if (el) el.value = v; }); }
+  function flip() { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (!it) return; snapshot(); it.flip = !it.flip; touch(); refreshSide(); draw(); }
   function remove() { if (!sel) return; snapshot(); board.items = board.items.filter((i) => i.id !== sel); sel = null; touch(); refreshSide(); draw(); }
   function step(from, to) { if (!from.length) return; to.push(JSON.stringify(board.items)); board.items = JSON.parse(from.pop()); sel = null; touch(); refreshSide(); draw(); }
   function keys(e) {
@@ -452,11 +496,13 @@
     if (e.key === "Delete" || e.key === "Backspace") { if (sel) { e.preventDefault(); remove(); } }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); step(undo, redo); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); step(redo, undo); }
-    else if (e.key === "Escape") { sel = null; armed = null; tool = "select"; refreshSide(); draw(); }
+    else if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) { flip(); }
+    else if (e.key === "Escape") { sel = null; armed = null; armedPose = null; tool = "select"; refreshSide(); draw(); }
   }
 
   /* ───────── picture ───────── */
-  function picture() {
+  async function picture() {
+    await loadPoses([board]);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W * 2}" height="${H * 2}"><style>.sb-name{font-family:Arial,Helvetica,sans-serif;fill:#2b2c30;paint-order:stroke;stroke:#fff;stroke-width:3px}.sb-note{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#16171b}</style>${stageSvg(true)}</svg>`;
     const img = new Image();
     img.onload = () => {
@@ -469,12 +515,6 @@
   /* ───────── PDF of the drawings (the "PDF report" button on the Drawing board tab) ─────────
      One A4 landscape page per variation of the selected set play: club header, the drawing, the notes. Same fonts and crest
      as the app's Set Plays Report (PDF_FONT_R, PDF_FONT_B, PDF_LOGO from index.html, when present). */
-  function loadPhoto(k) {
-    if (photos[k] && photos[k].startsWith("data:")) return Promise.resolve();
-    return fetch(k === "grb" ? "heads/aek-crest.png" : "heads/" + k + ".webp").then((r) => (r.ok ? r.blob() : Promise.reject()))
-      .then((b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); }))
-      .then((url) => { photos[k] = url; }).catch(() => { photos[k] = "none"; });
-  }
   function boardPng(b) {
     const keep = board; board = b;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W * 2}" height="${H * 2}"><style>.sb-name{font-family:Arial,Helvetica,sans-serif;fill:#2b2c30;paint-order:stroke;stroke:#fff;stroke-width:3px}.sb-note{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#16171b}</style>${stageSvg(true, true)}</svg>`;
@@ -493,9 +533,7 @@
     if (!list.length) return say("There is no drawing for this set play yet.");
     say("Creating the PDF…");
     try {
-      const keys = new Set(["grb"]);
-      list.forEach((b) => b.items.forEach((i) => { if (i.t === "p" && (i.team === "aek" || i.team === "gk")) { const k = photoKey(i.name); if (k) keys.add(k); } }));
-      await Promise.all([...keys].map(loadPhoto));
+      await loadPoses(list);
       const { jsPDF } = window.jspdf, doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       let F = "helvetica";
       if (typeof PDF_FONT_R !== "undefined" && typeof PDF_FONT_B !== "undefined") {
@@ -568,13 +606,20 @@
       const it = board.items.find((i) => i.id === sel), d = b.dataset;
       if (d.view) { board.cam = camFrom(viewOf(d.view)); syncSliders(); touch(); return draw(); }
       if (d.style) { board.style = d.style; touch(); return redraw(true); }
-      if (d.photos) { board.photos = d.photos === "1"; touch(); return redraw(true); }
+      if (d.pgroup) { poseGroup = d.pgroup; return refreshSide(); }
+      if (d.pose) {
+        curPose = d.pose; const p = board.items.find((i) => i.id === sel && i.t === "p");
+        if (p) { if (p.pose !== d.pose) { snapshot(); p.pose = d.pose; touch(); } armedPose = null; }
+        else { armedPose = armedPose === d.pose ? null : d.pose; armed = null; tool = "select"; }
+        refreshSide(); return draw();
+      }
+      if (d.act === "flip") return flip();
       if (d.side) { side = +d.side; return redraw(true); }
       if (d.tpl) {
         if (board.items.length && !confirm("Replace what is on the pitch with this shape?")) return;
         const t = TEMPLATES.find((x) => x.id === d.tpl); snapshot(); board.items = t.build(-side); board.cam = camFrom(viewOf(t.view(side))); sel = null; touch(); return redraw(true);
       }
-      if (d.pl) { armed = armed === d.pl ? null : d.pl; tool = "select"; sel = null; refreshSide(); return draw(); }
+      if (d.pl) { armed = armed === d.pl ? null : d.pl; armedPose = null; tool = "select"; sel = null; refreshSide(); return draw(); }
       if (d.act === "del") return remove();
       if (!it) return;
       snapshot();
@@ -622,6 +667,12 @@
 .sb-sl{display:grid;grid-template-columns:52px 1fr;align-items:center;gap:8px;font:500 12px var(--f-body);color:var(--muted)}.sb-sl input{width:100%;accent-color:var(--accent)}
 .sb-sw{width:26px;height:26px;border-radius:50%;border:2px solid var(--surface);outline:1px solid var(--line);background:var(--c);cursor:pointer}.sb-sw.on{outline:3px solid var(--accent)}
 .sb-muted{margin:0;font-size:12.5px;color:var(--muted)}
+.sb-poses{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:5px;max-height:236px;overflow:auto;padding:2px}
+.sb-pose{height:62px;border:1px solid var(--line);background:#eef2ea;border-radius:7px;padding:3px;cursor:pointer;display:flex;align-items:flex-end;justify-content:center}
+.sb-pose img{max-width:100%;max-height:100%;object-fit:contain;pointer-events:none}
+.sb-pose:hover{border-color:var(--muted)}.sb-pose.on{outline:2px solid var(--accent);border-color:var(--accent);background:#fff6cc}
+.sb-pose.armed{outline:3px solid #16171b}
+.sb-pn{align-self:center}
 .sb-ink{padding:4px 6px 2px}.sb-ink>span{display:block;font:600 10.5px/1 var(--f-body);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
 .sb-ink>div{display:grid;grid-template-columns:repeat(4,26px);gap:7px}
 @media (max-width:1080px){.sb-main{grid-template-columns:minmax(0,1fr)}.sb-tools{flex-direction:row;flex-wrap:wrap}.sb-tools i{width:1px;height:auto;margin:4px 3px}.sb-t span{display:none}.sb-ink>span{display:none}.sb-ink>div{display:flex}.sb-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
