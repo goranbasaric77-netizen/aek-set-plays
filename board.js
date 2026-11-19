@@ -23,7 +23,7 @@
     ["Goalkeepers", [["Strakosha", ""], ["Brignoli", ""], ["Balamotis", ""], ["Angelopoulos", ""]]],
     ["Defenders", [["Moukoudi", "2"], ["Relvas", "44"], ["Vida", "21"], ["Alexiou", "5"], ["Georgiev", "15"], ["Rota", "12"], ["Pilios", "3"], ["Lykogiannis", ""], ["Christakopoulos", "57"]]],
     ["Midfielders", [["Kairinen", "6"], ["Majer", "14"], ["Arriaga", "16"], ["Marin", "18"], ["Mantalos", "20"], ["Vitalis", "27"], ["Kaloskamis", "17"], ["Sahabo", "80"]]],
-    ["Forwards", [["Koita", "11"], ["Kutesa", "7"], ["Gacinovic", "8"], ["Zubkov", "10"], ["Joao Mario", ""], ["Jovic", "9"], ["Varga", "25"], ["Argyriou", "99"], ["Zini", "90"]]],
+    ["Forwards", [["Koita", "11"], ["Kutesa", "7"], ["Gacinovic", "8"], ["Zubkov", "10"], ["Joao Mario", ""], ["Jovic", "9"], ["Varga", "19"], ["Argyriou", "99"], ["Zini", "90"]]],
   ];
   const KEEPERS = ["Strakosha", "Brignoli", "Balamotis", "Angelopoulos"];
   const TEAM_NAMES = TEAM.flatMap((g) => g[1].map((x) => x[0]));
@@ -214,7 +214,7 @@
   }
   /* ───────── player figures: poses (Goran's sheet of 69 figures, 19.11.2026) ─────────
      In a set play what matters is which way a player faces and what the arms and body do, so every figure is a pose picture
-     (poses/pNN.webp, AEK kit, transparent background). A player keeps its pose (it.pose) and can be mirrored (it.flip).
+     (poses/pNN.webp, AEK kit, transparent background). A player keeps its pose (it.pose) and the way it looks (it.face).
      Other teams get the same picture recoloured in a canvas: the yellow of the kit becomes red (opponent), green (keeper)
      or blue (opponent keeper). Pictures are kept as data URLs, because the exported picture and the PDF can only carry
      embedded images. While a picture loads, the drawn figure stands in. */
@@ -259,31 +259,45 @@
   }
   const loadPoses = (list) => Promise.all(list.flatMap((b) => b.items.filter((i) => i.t === "p").map((i) => loadPose(poseOf(i), i.team))));
 
-  /* Where a figure sits on the screen: feet (sx, sy), picture size, turn (it.rot, degrees clockwise, about the middle of
-     the figure) and the top of the turned figure (for the name). */
+  /* Which way a player faces (it.face, degrees, turning on the spot): 0 = towards the camera, 90 = to the right of the
+     screen, 180 = away from the camera, 270 = to the left. A standing player shows the matching view from the sheet
+     (front, three-quarter, side, back, and their mirror images: 8 directions). Every other pose has one drawing, made
+     facing right, so it is shown as drawn (right) or mirrored (left). Older drawings: it.flip / the chosen standing view. */
+  const STAND = ["p00", "p01", "p02", "p03", "p04", "p05", "p06", "p07"];
+  const POSE_FACE = { p00: 0, p01: 45, p02: 90, p03: 180, p04: 180, p05: 135, p06: 90, p07: 90 };
+  const FACE_POSE = [["p00", 0], ["p01", 0], ["p02", 0], ["p05", 0], ["p03", 0], ["p05", 1], ["p02", 1], ["p01", 1]];
+  const FACE_NAME = ["Facing the camera", "Front · right", "Right", "Back · right", "Back to the camera", "Back · left", "Left", "Front · left"];
+  function faceOf(it) {
+    if (it.face !== undefined && it.face !== null) return ((Math.round(+it.face) % 360) + 360) % 360;
+    const p = poseOf(it);
+    if (STAND.includes(p)) { const f = POSE_FACE[p]; return it.flip ? (360 - f) % 360 : f; }
+    return it.flip ? 270 : 90;
+  }
+  function look(it) {
+    const f = faceOf(it), p = poseOf(it);
+    if (STAND.includes(p)) { if (POSE_FACE[p] === f) return { id: p, flip: false }; const [id, fl] = FACE_POSE[Math.round(f / 45) % 8]; return { id, flip: !!fl }; }
+    return { id: p, flip: f > 180 };
+  }
+  /* Where a figure sits on the screen: feet (sx, sy), picture size, top of the figure (for the name). */
   function figGeom(it) {
-    const p = POSE[poseOf(it)], [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
-    const rot = ((+it.rot || 0) % 360 + 360) % 360, r = rad(rot), cx = sx, cy = sy - h / 2;
-    const hh = Math.abs((w / 2) * Math.sin(r)) + Math.abs((h / 2) * Math.cos(r));
-    return { sx, sy, w, h, k, rot, cx, cy, top: cy - hh, r };
+    const p = POSE[look(it).id], [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
+    return { sx, sy, w, h, k, cx: sx, cy: sy - h / 2, top: sy - h };
   }
   function figureSvg(it, selected) {
-    const id = poseOf(it), url = poseUrl(id, it.team);
+    const L = look(it), url = poseUrl(L.id, it.team);
     if (!url) return drawnSvg(it, selected);
-    const G = figGeom(it), { sx, sy, w, h, rot, cx, cy } = G;
+    const G = figGeom(it), { sx, sy, w, h } = G;
     const fs = clamp(scale() * 0.78, 12, 21);
     const label = nameLabel(it, sx, G.top, fs);
     const rx = Math.max(w * 0.42, h * 0.16);
-    const turned = rot > 25 && rot < 335;
-    // a turned figure (lying, diving, leaning) gets its shadow under the middle of the body
-    const gy = turned ? cy + Math.abs(Math.sin(G.r)) * h * 0.18 : sy - 1, grx = turned ? Math.max(rx, Math.abs(Math.sin(G.r)) * h * 0.46) : rx;
-    const ring = selected ? `<ellipse cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" rx="${(grx + 6).toFixed(1)}" ry="${((grx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
-    const shadow = `<ellipse cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" rx="${grx.toFixed(1)}" ry="${(grx * 0.26).toFixed(1)}" fill="rgba(0,0,0,.17)"/>`;
-    const fl = it.flip ? ` transform="translate(${(sx * 2).toFixed(1)},0) scale(-1,1)"` : "";
+    const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${(rx + 6).toFixed(1)}" ry="${((rx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
+    const shadow = `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${rx.toFixed(1)}" ry="${(rx * 0.26).toFixed(1)}" fill="rgba(0,0,0,.17)"/>`;
+    const fl = L.flip ? ` transform="translate(${(sx * 2).toFixed(1)},0) scale(-1,1)"` : "";
     const box = `x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"`;
-    return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}${shadow}<g${rot ? ` transform="rotate(${rot.toFixed(1)} ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}><image href="${url}" ${box}${fl}/>
-      <rect ${box} fill="transparent"/></g>${label}</g>`;
+    return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}${shadow}<image href="${url}" ${box}${fl}/><rect ${box} fill="transparent"/>${label}</g>`;
   }
+  /* Turn handle: a ring on the ground round the player's feet with a point where the player looks. */
+  function faceRing(G) { const R = Math.max(G.w * 0.62, G.h * 0.3) + 10; return { R, ry: R * 0.34 }; }
   /* Names: every figure reports its name with the spot just above its head; once all figures are drawn the names are
      laid out so that none covers another (nearest free spot above or to the side, with a thin line back to the player). */
   let labels = null;
@@ -311,7 +325,7 @@
     return out.join("");
   }
   function posesHtml() {
-    const it = board.items.find((i) => i.id === sel && i.t === "p"), cur = it ? poseOf(it) : curPose;
+    const it = board.items.find((i) => i.id === sel && i.t === "p"), cur = it ? (STAND.includes(poseOf(it)) ? look(it).id : poseOf(it)) : curPose;
     return `<div class="sb-row">${POSE_GROUPS.map((g) => `<button class="sb-chip ${poseGroup === g ? "on" : ""}" data-pgroup="${esc(g)}">${esc(g)}</button>`).join("")}</div>
       <div class="sb-poses">${POSES.filter((p) => p.g === poseGroup).map((p) => `<button class="sb-pose ${cur === p.id ? "on" : ""} ${armedPose === p.id ? "armed" : ""}" data-pose="${p.id}" title="${esc(p.n)}" aria-label="${esc(p.n)}"><img src="poses/${p.id}.webp" alt="" loading="lazy" draggable="false"></button>`).join("")}</div>
       <p class="sb-muted">${it ? "Click a figure to change the pose of " + esc(it.name || "the selected player") + "." : "Click a figure, then the pitch to place it. Select a player to change its pose."}</p>`;
@@ -368,11 +382,11 @@
     const H1 = (x, y, key, kind) => { const [sx, sy] = proj(x, y, 0); return `<circle data-h="${key}" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="8" class="sb-h ${kind || ""}"/>`; };
     if (it.t === "a") return H1(it.a[0], it.a[1], "a") + H1(it.c[0], it.c[1], "c", "mid") + H1(it.b[0], it.b[1], "b");
     if (it.t === "z") return H1(it.x + it.w, it.y, "w") + H1(it.x, it.y + it.h, "h");
-    if (it.t === "p") {                                    // turn handle: drag it round the player (snaps every 45 degrees)
-      const G = figGeom(it), d = G.h / 2 + 22, hx = G.cx + Math.sin(G.r) * d, hy = G.cy - Math.cos(G.r) * d;
-      return `<path d="M${G.cx.toFixed(1)} ${G.cy.toFixed(1)} L${hx.toFixed(1)} ${hy.toFixed(1)}" stroke="#16171b" stroke-width="1.2" stroke-dasharray="3 3" fill="none" pointer-events="none"/>
-        <circle data-h="rot" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="9" class="sb-h rot"><title>Drag to turn the player</title></circle>
-        <path d="M${(hx - 4).toFixed(1)} ${(hy + 1.5).toFixed(1)} a4 4 0 1 1 1.5 3" stroke="#16171b" stroke-width="1.5" fill="none" pointer-events="none"/>`;
+    if (it.t === "p") {                                    // turn handle: drag the point round the ring at the feet (8 directions)
+      const G = figGeom(it), { R, ry } = faceRing(G), f = rad(faceOf(it)), hx = G.sx + Math.sin(f) * R, hy = G.sy + Math.cos(f) * ry;
+      return `<ellipse cx="${G.sx.toFixed(1)}" cy="${G.sy.toFixed(1)}" rx="${R.toFixed(1)}" ry="${ry.toFixed(1)}" fill="none" stroke="#16171b" stroke-width="1.3" stroke-dasharray="4 4" pointer-events="none"/>
+        <path d="M${G.sx.toFixed(1)} ${G.sy.toFixed(1)} L${hx.toFixed(1)} ${hy.toFixed(1)}" stroke="#16171b" stroke-width="1.6" fill="none" pointer-events="none"/>
+        <circle data-h="rot" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="9" class="sb-h rot"><title>Drag round the ring to turn the player</title></circle>`;
     }
     return "";
   }
@@ -408,7 +422,7 @@
     air: '<path d="M3 19C7 4 15 4 20 12"/><path d="M20 6v6h-6"/>', block: '<path d="M4 17c5-7 9-8 13-8" stroke-dasharray="3 3"/><path d="M17 4v10M20 4v10"/>',
     ell: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/>', rect: '<path d="M4 9l10-4 6 6-10 4z"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>',
     undo: '<path d="M8 5L3 10l5 5"/><path d="M3 10h11a6 6 0 010 12h-3"/>', redo: '<path d="M16 5l5 5-5 5"/><path d="M21 10H10a6 6 0 000 12h3"/>', trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
-    png: '<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>', plus: '<path d="M12 5v14M5 12h14"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
+    png: '<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>', pack: '<path d="M4 8l8-4 8 4-8 4z"/><path d="M4 8v8l8 4 8-4V8M12 12v8"/>', stack: '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M6 6h12M8 3h8"/>', plus: '<path d="M12 5v14M5 12h14"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
   };
   const ic = (n) => `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n] || ""}</svg>`;
   const TOOLS = [["select", "Select and move", "Select · move · drag empty pitch to pan"], ["aek", "AEK player", "Click the pitch to place an AEK player"], ["opp", "Opponent", "Click the pitch to place an opponent"],
@@ -427,6 +441,8 @@
         <button class="btn primary sb-ib" id="sbNew" title="New drawing for this set play">${ic("plus")}<span>New</span></button>
         <button class="btn sb-ib" id="sbDup" title="Copy this drawing as a new variation">${ic("copy")}<span>Duplicate</span></button>
         <button class="btn sb-ib" id="sbPng" title="Download the drawing as a picture">${ic("png")}<span>Picture</span></button>
+        <button class="btn sb-ib sb-addpack" id="sbPack" title="Keep a copy of this drawing as it is now in the pack, then go on with the next one">${ic("pack")}<span>Add to pack</span></button>
+        <button class="btn sb-ib" id="sbPackOpen" title="The pack: order the drawings and send them as one PDF or one by one">${ic("stack")}<span>Pack</span><b class="sb-badge" id="sbPackN">${pack().length}</b></button>
         <button class="btn danger sb-ib" id="sbDel" title="Delete this drawing">${ic("trash")}</button>
       </div>
       <div class="sb-meta">
@@ -446,13 +462,13 @@
             <label class="sb-sl"><span>Zoom</span><input type="range" id="sbZoom" min="0.4" max="3.2" step="0.02" value="${board.cam.zoom}"></label>
             <div class="sb-row"><button class="sb-chip ${board.style !== "grass" ? "on" : ""}" data-style="paper">White pitch</button><button class="sb-chip ${board.style === "grass" ? "on" : ""}" data-style="grass">Green pitch</button></div></section>
           <section id="sbInspect"></section>
-          <section><h3>Figures <small>F flips · R turns</small></h3><div id="sbPoses"></div></section>
+          <section><h3>Figures <small>R turns · F mirrors</small></h3><div id="sbPoses"></div></section>
           <section><h3>Squad <small>click a name, then the pitch</small></h3><div class="sb-squad" id="sbSquad"></div></section>
           <section><h3>Start from a shape</h3><div class="sb-row"><button class="sb-chip ${side > 0 ? "on" : ""}" data-side="1">Right side</button><button class="sb-chip ${side < 0 ? "on" : ""}" data-side="-1">Left side</button></div>
             <div class="sb-views">${TEMPLATES.map((t) => `<button class="sb-chip" data-tpl="${t.id}">${esc(t.n)}</button>`).join("")}</div></section>
           <section><h3>Notes</h3><textarea id="sbNotes" rows="4" maxlength="1200" placeholder="Roles, signal, timing of the runs">${esc(board.notes)}</textarea></section>
         </aside>
-      </div></div>`;
+      </div><dialog class="sb-dlg" id="sbPackDlg" aria-label="Pack"></dialog></div>`;
   }
   function squadHtml() {
     const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name));
@@ -472,14 +488,22 @@
   }
   function inspectHtml() {
     const it = board.items.find((i) => i.id === sel);
-    if (!it) return `<h3>Selected</h3><p class="sb-muted">Nothing selected. Click a player, an arrow or a zone to change it.</p>`;
+    if (!it) {                                             // nothing selected: the whole squad in one list, pick a name and click the pitch
+      const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)), extra = plannerSquad().filter((n) => !TEAM_NAMES.includes(n));
+      const opt = (n, num) => `<option value="${esc(n)}" ${armed === n ? "selected" : ""}>${num ? num + "  " : ""}${esc(n)}${used.has(n) ? "  ✓" : ""}</option>`;
+      return `<h3>Player</h3><select id="sbAddSel" class="sb-psel" aria-label="Add a player"><option value="">Add a player…</option>
+        ${TEAM.map(([g, l]) => `<optgroup label="${g}">${l.map(([n, num]) => opt(n, num)).join("")}</optgroup>`).join("")}
+        ${extra.length ? `<optgroup label="Squad list">${extra.map((n) => opt(n, "")).join("")}</optgroup>` : ""}</select>
+        <p class="sb-muted">${armed ? "Now click the pitch to place " + esc(armed) + "." : "Pick a name, then click the pitch. Click a player on the pitch to change it."}</p>`;
+    }
     const del = `<button class="btn danger sb-ib" data-act="del">${ic("trash")}<span>Delete</span></button>`;
     const sw = (set, cur, attr) => Object.keys(set).map((k) => `<button class="sb-sw ${cur === k ? "on" : ""}" data-${attr}="${k}" style="--c:${Array.isArray(set[k]) ? set[k][1] : set[k]}" aria-label="${k}"></button>`).join("");
     if (it.t === "p") return `<h3>Player</h3>${nameSelect(it)}
       <div class="sb-row">${[["aek", "AEK"], ["gk", "Goalkeeper"], ["opp", "Opponent"], ["oppgk", "Opp. GK"]].map(([k, n]) => `<button class="sb-chip ${it.team === k ? "on" : ""}" data-team="${k}">${n}</button>`).join("")}</div>
-      <label class="sb-sl sb-rot"><span>Turn</span><input type="range" id="sbPRot" min="0" max="359" step="1" value="${+it.rot || 0}" title="Turn the player (R / Shift+R = 15°)"><output id="sbPRotV">${+it.rot || 0}°</output></label>
-      <div class="sb-row"><button class="sb-chip" data-rot="-45" title="Shift+R = 15°">↺ 45°</button><button class="sb-chip" data-rot="45" title="R = 15°">↻ 45°</button><button class="sb-chip" data-rot="0">Upright</button></div>
-      <div class="sb-row"><button class="sb-chip" data-act="flip" title="Mirror the figure (F)">⇆ Turn the other way</button><span class="sb-muted sb-pn">${esc(POSE[poseOf(it)].n)}</span></div>${del}`;
+      <label class="sb-sl sb-rot"><span>Turn</span><input type="range" id="sbPRot" min="0" max="315" step="45" value="${faceOf(it)}" title="Which way the player looks (R / Shift+R)"></label>
+      <div class="sb-face"><output id="sbPRotV">${FACE_NAME[Math.round(faceOf(it) / 45) % 8]}</output></div>
+      <div class="sb-row"><button class="sb-chip" data-rot="-45" title="Shift+R">↺ Turn left</button><button class="sb-chip" data-rot="45" title="R">Turn right ↻</button></div>
+      <div class="sb-row"><button class="sb-chip" data-act="flip" title="Mirror (F)">⇆ Other way</button><button class="sb-chip" data-rot="0">Face camera</button><span class="sb-muted sb-pn">${esc(POSE[poseOf(it)].n)}</span></div>${del}`;
     if (it.t === "a") return `<h3>Arrow</h3><div class="sb-row">${Object.keys(KINDS).map((k) => `<button class="sb-chip ${it.kind === k ? "on" : ""}" data-kind="${k}">${KINDS[k].n}</button>`).join("")}</div>
       <div class="sb-row">${sw(INK, it.color, "color")}</div><p class="sb-muted">Drag the middle point to bend the line.</p>${del}`;
     if (it.t === "z") return `<h3>Zone</h3><div class="sb-row">${sw(ZONE, it.color, "zcolor")}</div><p class="sb-muted">Drag the two points to change its size.</p>${del}`;
@@ -509,7 +533,7 @@
     if (e.button && e.button !== 0) return;
     const svg = host.querySelector("#sbSvg"), g = ground(e), h = e.target.closest("[data-h]"), node = e.target.closest("[data-id]");
     try { svg.setPointerCapture(e.pointerId); } catch (g) { /* pointer already gone: dragging still works while it stays over the pitch */ }
-    if (armed || armedPose) { snapshot(); const it = P("aek", g[0], g[1], armed || nextName()); it.pose = curPose; board.items.push(it); armedPose = null; sel = it.id; armed = null; tool = "select"; touch(); refreshSide(); draw(); return; }
+    if (armed || armedPose) { snapshot(); const it = P("aek", g[0], g[1], armed || nextName()); it.pose = curPose; it.face = STAND.includes(curPose) ? POSE_FACE[curPose] : 90; board.items.push(it); armedPose = null; sel = it.id; armed = null; tool = "select"; touch(); refreshSide(); draw(); return; }
     if (tool === "select") {
       if (h && sel) { snapshot(); dragging = { kind: "handle", key: h.dataset.h, id: sel }; return; }
       if (node) {
@@ -520,7 +544,7 @@
     }
     if (["aek", "opp", "gk"].includes(tool)) {
       snapshot(); const n = tool === "aek" ? nextName() : tool === "gk" ? gkName() : "";
-      const it = P(tool, g[0], g[1], n); it.pose = curPose; board.items.push(it); sel = it.id; dragging = { kind: "move", id: it.id, g0: g, orig: { ...it }, moved: true }; touch(); refreshSide(); draw(); return;
+      const it = P(tool, g[0], g[1], n); it.pose = curPose; it.face = STAND.includes(curPose) ? POSE_FACE[curPose] : 90; board.items.push(it); sel = it.id; dragging = { kind: "move", id: it.id, g0: g, orig: { ...it }, moved: true }; touch(); refreshSide(); draw(); return;
     }
     if (tool === "ball") { snapshot(); board.items = board.items.filter((i) => i.t !== "b"); const it = { id: uid(), t: "b", x: g[0], y: g[1] }; board.items.push(it); sel = it.id; touch(); refreshSide(); draw(); return; }
     if (tool === "text") {                                 // the note is typed in the side panel (no pop-up: it does not exist in every browser)
@@ -547,10 +571,9 @@
     } else if (dragging.kind === "arrow") { it.b = g; it.c = [(it.a[0] + g[0]) / 2, (it.a[1] + g[1]) / 2]; }
     else if (dragging.kind === "zone") { it.w = Math.max(0.6, Math.abs(g[0] - dragging.g0[0])); it.h = Math.max(0.6, Math.abs(g[1] - dragging.g0[1])); }
     else if (dragging.kind === "handle" && dragging.key === "rot") {
-      const G = figGeom(it), [px, py] = stagePoint(e);
-      let a = (Math.atan2(px - G.cx, -(py - G.cy)) * 180) / Math.PI; a = (a + 360) % 360;
-      const s45 = Math.round(a / 45) * 45; if (Math.abs(a - s45) <= 5) a = s45 % 360;
-      it.rot = Math.round(a); syncRot(it);
+      const G = figGeom(it), { R, ry } = faceRing(G), [px, py] = stagePoint(e);
+      const a = ((Math.atan2((px - G.sx) / R, (py - G.sy) / ry) * 180) / Math.PI + 360) % 360;
+      it.face = (Math.round(a / 45) * 45) % 360; delete it.flip; syncRot(it);
     }
     else if (dragging.kind === "handle") {
       if (it.t === "a") it[dragging.key] = g; else if (dragging.key === "w") it.w = Math.max(0.6, Math.abs(g[0] - it.x)); else it.h = Math.max(0.6, Math.abs(g[1] - it.y));
@@ -568,9 +591,9 @@
   }
   function nextName() { const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)); return squad().find((n) => !used.has(n) && !KEEPERS.includes(n)) || ""; }
   function syncSliders() { const c = board.cam; [["#sbAz", c.az], ["#sbEl", c.el], ["#sbZoom", c.zoom], ["#sbKx", c.kx || 1]].forEach(([q, v]) => { const el = host.querySelector(q); if (el) el.value = v; }); }
-  function turn(it, deg) { it.rot = ((Math.round((+it.rot || 0) + deg) % 360) + 360) % 360; touch(); syncRot(it); draw(); }
-  function syncRot(it) { const s = host && host.querySelector("#sbPRot"), o = host && host.querySelector("#sbPRotV"); if (s) s.value = it.rot || 0; if (o) o.textContent = (it.rot || 0) + "°"; }
-  function flip() { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (!it) return; snapshot(); it.flip = !it.flip; touch(); refreshSide(); draw(); }
+  function turn(it, deg) { it.face = (((Math.round((faceOf(it) + deg) / 45) * 45) % 360) + 360) % 360; delete it.flip; touch(); syncRot(it); draw(); }
+  function syncRot(it) { const f = faceOf(it), s = host && host.querySelector("#sbPRot"), o = host && host.querySelector("#sbPRotV"); if (s) s.value = f; if (o) o.textContent = FACE_NAME[Math.round(f / 45) % 8]; }
+  function flip() { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (!it) return; snapshot(); it.face = (360 - faceOf(it)) % 360; delete it.flip; touch(); refreshSide(); draw(); }
   function remove() { if (!sel) return; snapshot(); board.items = board.items.filter((i) => i.id !== sel); sel = null; touch(); refreshSide(); draw(); }
   function step(from, to) { if (!from.length) return; to.push(JSON.stringify(board.items)); board.items = JSON.parse(from.pop()); sel = null; touch(); refreshSide(); draw(); }
   function keys(e) {
@@ -579,7 +602,7 @@
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); step(undo, redo); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); step(redo, undo); }
     else if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) { flip(); }
-    else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey) { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (it) { e.preventDefault(); snapshot(); turn(it, e.shiftKey ? -15 : 15); } }
+    else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey) { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (it) { e.preventDefault(); snapshot(); turn(it, e.shiftKey ? -45 : 45); } }
     else if (e.key === "Escape") { sel = null; armed = null; armedPose = null; tool = "select"; refreshSide(); draw(); }
   }
 
@@ -598,55 +621,128 @@
   /* ───────── PDF of the drawings (the "PDF report" button on the Drawing board tab) ─────────
      One A4 landscape page per variation of the selected set play: club header, the drawing, the notes. Same fonts and crest
      as the app's Set Plays Report (PDF_FONT_R, PDF_FONT_B, PDF_LOGO from index.html, when present). */
-  function boardPng(b) {
+  function boardPng(b, s = 2) {
     const keep = board; board = b;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W * 2}" height="${H * 2}"><style>.sb-name{font-family:Arial,Helvetica,sans-serif;fill:#2b2c30;paint-order:stroke;stroke:#fff;stroke-width:3px}.sb-note{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#16171b}</style>${stageSvg(true, true)}</svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${Math.round(W * s)}" height="${Math.round(H * s)}"><style>.sb-name{font-family:Arial,Helvetica,sans-serif;fill:#2b2c30;paint-order:stroke;stroke:#fff;stroke-width:3px}.sb-note{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#16171b}</style>${stageSvg(true, true)}</svg>`;
     board = keep;
     return new Promise((res, rej) => {
       const img = new Image();
-      img.onload = () => { const c = document.createElement("canvas"); c.width = W * 2; c.height = H * 2; c.getContext("2d").drawImage(img, 0, 0); res(c.toDataURL("image/jpeg", 0.92)); };
+      img.onload = () => { const c = document.createElement("canvas"); c.width = Math.round(W * s); c.height = Math.round(H * s); c.getContext("2d").drawImage(img, 0, 0); res(c.toDataURL("image/jpeg", s < 1 ? 0.8 : 0.92)); };
       img.onerror = () => rej(new Error("the drawing could not be turned into a picture"));
       img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     });
   }
-  async function pdf() {
-    const say = (s) => { if (typeof setStatus === "function") setStatus(s); };
-    if (!window.jspdf) return say("Could not create the PDF (PDF library missing).");
+  /* ───────── PDF ─────────
+     One A4 landscape page per drawing: club header, the drawing, the notes. Same fonts and crest as the app's Set Plays
+     Report (PDF_FONT_R, PDF_FONT_B, PDF_LOGO from index.html, when present). pages = [{ b: drawing, title }]. */
+  const say = (s) => { if (typeof setStatus === "function") setStatus(s); };
+  const fileName = (s) => String(s).replace(/[^\w\- ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 80) + ".pdf";
+  async function pdfBlob(pages) {
+    if (!window.jspdf) throw new Error("PDF library missing");
+    await loadPoses(pages.map((p) => p.b));
+    const { jsPDF } = window.jspdf, doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    let F = "helvetica";
+    if (typeof PDF_FONT_R !== "undefined" && typeof PDF_FONT_B !== "undefined") {
+      doc.addFileToVFS("LS-R.ttf", PDF_FONT_R); doc.addFont("LS-R.ttf", "LS", "normal");
+      doc.addFileToVFS("LS-B.ttf", PDF_FONT_B); doc.addFont("LS-B.ttf", "LS", "bold"); F = "LS";
+    }
+    const T = (s, x, y, o = {}) => { doc.setFont(F, o.b ? "bold" : "normal"); doc.setFontSize(o.s || 9); doc.setTextColor(o.c || "#16171B"); doc.text(String(s), x, y, { align: o.a || "left", maxWidth: o.w }); };
+    const made = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    for (let i = 0; i < pages.length; i++) {
+      const { b, title } = pages[i], play = playName(b.play), group = groups()[(plays().find((p) => p.id === b.play) || {}).g] || "";
+      if (i) doc.addPage();
+      if (typeof PDF_LOGO !== "undefined") { try { doc.addImage(PDF_LOGO, "PNG", 10, 7, 10.5, 14); } catch (e) { /* no crest */ } }
+      T("AEK ATHENS FC  ·  PERFORMANCE DEPARTMENT", 24, 11, { s: 7.5, b: 1, c: "#5F636B" });
+      T("SET PLAY  ·  " + play.toUpperCase(), 24, 19, { s: 16, b: 1 });
+      T(group, 287, 11, { s: 7.5, b: 1, c: "#5F636B", a: "right" });
+      T((title || b.name || "Variation") + (b.opponent ? "  ·  vs " + b.opponent : ""), 287, 18.5, { s: 11, b: 1, a: "right" });
+      doc.setFillColor("#F5C400"); doc.rect(10, 23.5, 277, 1.1, "F");
+      const png = await boardPng(b), h = (277 * H) / W;
+      doc.addImage(png, "JPEG", 10, 27, 277, h);
+      doc.setDrawColor("#D3D6DA"); doc.setLineWidth(0.25); doc.rect(10, 27, 277, h, "S");
+      const y = 27 + h + 6;
+      if (b.notes && b.notes.trim()) { T("NOTES", 10, y, { s: 7.5, b: 1, c: "#5F636B" }); T(b.notes.trim(), 10, y + 5, { s: 9.5, w: 277 }); }
+      T("AEK Athens FC · Set plays · " + made + (pages.length > 1 ? "  ·  " + (i + 1) + " / " + pages.length : ""), 287, 203, { s: 7, c: "#5F636B", a: "right" });
+    }
+    return doc.output("blob");
+  }
+  function download(blob, name) {
+    const url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  async function pdf() {                                    // "PDF drawings": every variation of the selected set play
     const list = store.list.filter((b) => b.play === board.play);
     if (!list.length) return say("There is no drawing for this set play yet.");
     say("Creating the PDF…");
     try {
-      await loadPoses(list);
-      const { jsPDF } = window.jspdf, doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-      let F = "helvetica";
-      if (typeof PDF_FONT_R !== "undefined" && typeof PDF_FONT_B !== "undefined") {
-        doc.addFileToVFS("LS-R.ttf", PDF_FONT_R); doc.addFont("LS-R.ttf", "LS", "normal");
-        doc.addFileToVFS("LS-B.ttf", PDF_FONT_B); doc.addFont("LS-B.ttf", "LS", "bold"); F = "LS";
-      }
-      const T = (s, x, y, o = {}) => { doc.setFont(F, o.b ? "bold" : "normal"); doc.setFontSize(o.s || 9); doc.setTextColor(o.c || "#16171B"); doc.text(String(s), x, y, { align: o.a || "left", maxWidth: o.w }); };
-      const play = playName(board.play), group = groups()[(plays().find((p) => p.id === board.play) || {}).g] || "";
-      const made = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-      for (let i = 0; i < list.length; i++) {
-        const b = list[i];
-        if (i) doc.addPage();
-        if (typeof PDF_LOGO !== "undefined") { try { doc.addImage(PDF_LOGO, "PNG", 10, 7, 10.5, 14); } catch (e) { /* no crest */ } }
-        T("AEK ATHENS FC  ·  PERFORMANCE DEPARTMENT", 24, 11, { s: 7.5, b: 1, c: "#5F636B" });
-        T("SET PLAY  ·  " + play.toUpperCase(), 24, 19, { s: 16, b: 1 });
-        T(group, 287, 11, { s: 7.5, b: 1, c: "#5F636B", a: "right" });
-        T((b.name || "Variation " + (i + 1)) + (b.opponent ? "  ·  vs " + b.opponent : ""), 287, 18.5, { s: 11, b: 1, a: "right" });
-        doc.setFillColor("#F5C400"); doc.rect(10, 23.5, 277, 1.1, "F");
-        const png = await boardPng(b), h = (277 * H) / W;
-        doc.addImage(png, "JPEG", 10, 27, 277, h);
-        doc.setDrawColor("#D3D6DA"); doc.setLineWidth(0.25); doc.rect(10, 27, 277, h, "S");
-        const y = 27 + h + 6;
-        if (b.notes && b.notes.trim()) { T("NOTES", 10, y, { s: 7.5, b: 1, c: "#5F636B" }); T(b.notes.trim(), 10, y + 5, { s: 9.5, w: 277 }); }
-        T("AEK Athens FC · Set plays · " + made + (list.length > 1 ? "  ·  " + (i + 1) + " / " + list.length : ""), 287, 203, { s: 7, c: "#5F636B", a: "right" });
-      }
-      const name = ("AEK Set play " + play).replace(/[^\w\- ]+/g, "").replace(/\s+/g, " ").trim() + ".pdf";
-      const url = URL.createObjectURL(doc.output("blob")), a = document.createElement("a");
-      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+      const name = fileName("AEK Set play " + playName(board.play));
+      download(await pdfBlob(list.map((b, i) => ({ b, title: b.name || "Variation " + (i + 1) }))), name);
       say("PDF created: " + name + " · " + list.length + (list.length === 1 ? " drawing" : " drawings"));
     } catch (e) { console.error(e); say("Could not create the PDF (" + e.message + ")."); }
+  }
+
+  /* ───────── the pack ─────────
+     "Add to pack" keeps a frozen copy of the drawing as it is now (store.pack), so the same drawing can be changed for the
+     next step and packed again. The pack is sent as one PDF (all pages in order) or one PDF per drawing; on a phone or
+     tablet the files can go straight to WhatsApp, Viber or mail (Share). The pack is saved with the drawings and in the backup. */
+  const pack = () => (store.pack = Array.isArray(store.pack) ? store.pack : []);
+  function packTitle(b) { const same = store.list.filter((x) => x.play === b.play); return b.name || "Variation " + (same.indexOf(b) + 1); }
+  const packFile = (p) => playName(p.b.play) + " " + p.title;
+  async function addToPack() {
+    const copy = JSON.parse(JSON.stringify(board)), n = pack().filter((p) => p.src === board.id).length;
+    const item = { id: uid(), src: board.id, title: packTitle(board) + (n ? " (" + (n + 1) + ")" : ""), at: new Date().toISOString(), b: copy, thumb: "" };
+    pack().push(item); persist(); refreshPack();
+    say("Added to the pack · " + pack().length + (pack().length === 1 ? " drawing" : " drawings"));
+    const btn = host && host.querySelector("#sbPack"); if (btn) { btn.classList.add("done"); setTimeout(() => btn.classList.remove("done"), 1400); }
+    try { await loadPoses([copy]); item.thumb = await boardPng(copy, 0.42); persist(); refreshPack(); } catch (e) { /* the list works without the small picture */ }
+  }
+  function refreshPack() {
+    if (!host) return;
+    const c = host.querySelector("#sbPackN"); if (c) c.textContent = pack().length;
+    const d = host.querySelector("#sbPackDlg"); if (d && d.open) d.innerHTML = packHtml();
+  }
+  function packHtml() {
+    const P = pack(), share = !!(navigator.canShare && navigator.share);
+    const li = P.map((p, i) => `<li><span class="sb-pk-n">${i + 1}</span>${p.thumb ? `<img src="${p.thumb}" alt="">` : `<i class="sb-pk-ph"></i>`}
+      <div class="sb-pk-t"><input data-pkname="${i}" maxlength="80" value="${esc(p.title)}" aria-label="Title of page ${i + 1}"><small>${esc(playName(p.b.play))} · packed ${new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</small></div>
+      <div class="sb-pk-b"><button data-pk="up" data-i="${i}" title="Move up" ${i ? "" : "disabled"}>↑</button><button data-pk="down" data-i="${i}" title="Move down" ${i < P.length - 1 ? "" : "disabled"}>↓</button>
+      <button data-pk="open" data-i="${i}" title="Open this copy as a new drawing">Edit</button><button data-pk="one" data-i="${i}" title="PDF of this drawing only">PDF</button><button data-pk="del" data-i="${i}" title="Take out of the pack" class="x">✕</button></div></li>`).join("");
+    return `<div class="sb-dlg-h"><h3>Pack <small>${P.length} ${P.length === 1 ? "drawing" : "drawings"} · pages in this order</small></h3><button class="sb-dlg-x" data-pk="close" aria-label="Close">✕</button></div>
+      ${P.length ? `<ol class="sb-pk">${li}</ol>` : `<p class="sb-muted sb-pk-empty">The pack is empty. Finish a drawing and press <b>Add to pack</b>, then the next one, and so on.</p>`}
+      <div class="sb-pk-act">
+        <button class="btn primary" data-pk="pdf" ${P.length ? "" : "disabled"}>One document · all ${P.length || ""} in one PDF</button>
+        <button class="btn" data-pk="each" ${P.length ? "" : "disabled"}>One by one · a PDF for each</button>
+        ${share ? `<button class="btn" data-pk="share" ${P.length ? "" : "disabled"}>Share…</button>` : ""}
+        <span class="grow"></span><button class="btn danger" data-pk="clear" ${P.length ? "" : "disabled"}>Empty the pack</button></div>`;
+  }
+  function openPack() { const d = host.querySelector("#sbPackDlg"); d.innerHTML = packHtml(); if (!d.open) d.showModal(); }
+  async function packAction(e) {
+    const t = e.target.closest("[data-pk]"); if (!t) return;
+    const P = pack(), i = +t.dataset.i, k = t.dataset.pk, d = host.querySelector("#sbPackDlg");
+    if (k === "close") return d.close();
+    if (k === "up" || k === "down") { const j = k === "up" ? i - 1 : i + 1; [P[i], P[j]] = [P[j], P[i]]; persist(); return refreshPack(); }
+    if (k === "del") { P.splice(i, 1); persist(); return refreshPack(); }
+    if (k === "clear") { if (!confirm("Empty the pack? The drawings themselves stay.")) return; P.length = 0; persist(); return refreshPack(); }
+    if (k === "open") { const b = JSON.parse(JSON.stringify(P[i].b)); b.id = uid(); b.name = P[i].title; b.items.forEach((x) => (x.id = uid())); store.list.push(b); d.close(); return open(b); }
+    const pages = (k === "one" ? [P[i]] : P).map((p) => ({ b: p.b, title: p.title }));
+    const stamp = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+    try {
+      t.disabled = true; say("Creating the PDF…");
+      if (k === "pdf" || k === "one") {
+        const name = fileName(k === "one" ? "AEK " + packFile(P[i]) : "AEK Set plays " + stamp + " (" + P.length + ")");
+        download(await pdfBlob(pages), name); say("PDF created: " + name);
+      } else if (k === "each") {
+        for (let n = 0; n < P.length; n++) { download(await pdfBlob([pages[n]]), fileName(String(n + 1).padStart(2, "0") + " AEK " + packFile(P[n]))); await new Promise((r) => setTimeout(r, 400)); }
+        say(P.length + " PDF files created, one for each drawing.");
+      } else if (k === "share") {
+        const one = confirm("Share as ONE document with all drawings?\n\nOK = one PDF · Cancel = a PDF for each drawing");
+        const files = one ? [new File([await pdfBlob(pages)], fileName("AEK Set plays " + stamp), { type: "application/pdf" })]
+          : await Promise.all(pages.map(async (p, n) => new File([await pdfBlob([p])], fileName(String(n + 1).padStart(2, "0") + " AEK " + packFile(P[n])), { type: "application/pdf" })));
+        if (navigator.canShare({ files })) await navigator.share({ files, title: "AEK set plays" }); else { files.forEach((f) => download(f, f.name)); }
+        say("Ready to send.");
+      }
+    } catch (err) { if (err && err.name !== "AbortError") { console.error(err); say("Could not create the PDF (" + err.message + ")."); } }
+    finally { t.disabled = false; }
   }
 
   /* ───────── wiring ───────── */
@@ -666,6 +762,10 @@
       open(rest[rest.length - 1] || newBoard(play, guessTemplate(play)));
     };
     q("#sbPng").onclick = picture;
+    q("#sbPack").onclick = addToPack; q("#sbPackOpen").onclick = openPack;
+    const dlg = q("#sbPackDlg");
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) return dlg.close(); packAction(e); });
+    dlg.addEventListener("input", (e) => { const n = e.target.dataset.pkname; if (n !== undefined && pack()[+n]) { pack()[+n].title = e.target.value; clearTimeout(saveT); saveT = setTimeout(persist, 400); } });
     q("#sbName").oninput = (e) => { board.name = e.target.value; touch(); const o = q("#sbPick").selectedOptions[0]; if (o) o.textContent = (board.name || "Variation") + (board.opponent ? " · vs " + board.opponent : ""); };
     q("#sbOpp").oninput = (e) => { board.opponent = e.target.value; touch(); };
     q("#sbNotes").oninput = (e) => { board.notes = e.target.value; touch(); };
@@ -692,12 +792,12 @@
       if (d.pgroup) { poseGroup = d.pgroup; return refreshSide(); }
       if (d.pose) {
         curPose = d.pose; const p = board.items.find((i) => i.id === sel && i.t === "p");
-        if (p) { if (p.pose !== d.pose) { snapshot(); p.pose = d.pose; touch(); } armedPose = null; }
+        if (p) { if (p.pose !== d.pose || STAND.includes(d.pose)) { snapshot(); const f = faceOf(p); p.pose = d.pose; p.face = STAND.includes(d.pose) ? POSE_FACE[d.pose] : f; delete p.flip; touch(); } armedPose = null; }
         else { armedPose = armedPose === d.pose ? null : d.pose; armed = null; tool = "select"; }
         refreshSide(); return draw();
       }
       if (d.act === "flip") return flip();
-      if (d.rot !== undefined && it && it.t === "p") { snapshot(); if (+d.rot === 0) { it.rot = 0; touch(); syncRot(it); return draw(); } return turn(it, +d.rot); }
+      if (d.rot !== undefined && it && it.t === "p") { snapshot(); if (+d.rot === 0) { it.face = 0; delete it.flip; touch(); refreshSide(); return draw(); } return turn(it, +d.rot); }
       if (d.side) { side = +d.side; return redraw(true); }
       if (d.tpl) {
         if (board.items.length && !confirm("Replace what is on the pitch with this shape?")) return;
@@ -712,6 +812,7 @@
     });
     q(".sb-side").addEventListener("change", () => { rotSnap = false; });
     q(".sb-side").addEventListener("input", (e) => {
+      if (e.target.id === "sbAddSel") { armed = e.target.value || null; armedPose = null; tool = "select"; refreshSide(); return draw(); }
       const it = board.items.find((i) => i.id === sel); if (!it) return;
       if (e.target.id === "sbPSel") {
         if (e.target.value === "__other") { otherName = true; refreshSide(); const f = host.querySelector("#sbPName"); if (f) { f.focus(); f.select(); } return; }
@@ -719,7 +820,7 @@
       }
       if (e.target.id === "sbPName") { it.name = e.target.value; touch(); draw(); host.querySelector("#sbSquad").innerHTML = squadHtml(); }
       if (e.target.id === "sbText") { it.text = e.target.value; touch(); draw(); }
-      if (e.target.id === "sbPRot") { if (!rotSnap) { snapshot(); rotSnap = true; } let a = +e.target.value; const s = Math.round(a / 45) * 45; if (Math.abs(a - s) <= 4) a = s % 360; it.rot = a; touch(); syncRot(it); draw(); }
+      if (e.target.id === "sbPRot") { if (!rotSnap) { snapshot(); rotSnap = true; } it.face = +e.target.value; delete it.flip; touch(); syncRot(it); draw(); }
     });
   }
 
@@ -763,9 +864,29 @@
 .sb-pose:hover{border-color:var(--muted)}.sb-pose.on{outline:2px solid var(--accent);border-color:var(--accent);background:#fff6cc}
 .sb-pose.armed{outline:3px solid #16171b}
 .sb-pn{align-self:center}
+.sb-badge{min-width:20px;height:20px;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 11.5px/20px var(--f-body);text-align:center;padding:0 5px}
+.sb-addpack.done{background:#2bb24c;border-color:#2bb24c;color:#fff}.sb-addpack.done span::after{content:" ✓"}
+.sb-dlg{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 60px);border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:16px 18px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.sb-dlg::backdrop{background:rgba(10,11,13,.6)}
+.sb-dlg-h{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.sb-dlg-h h3{margin:0;font:700 18px var(--f-body)}.sb-dlg-h h3 small{font:400 13px var(--f-body);color:var(--muted);margin-left:8px}
+.sb-dlg-x{border:0;background:var(--surface2);color:var(--ink);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:15px}
+.sb-pk{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow:auto}
+.sb-pk li{display:grid;grid-template-columns:26px 150px minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface2)}
+.sb-pk-n{font:700 15px var(--f-body);color:var(--muted);text-align:center}
+.sb-pk img,.sb-pk-ph{width:150px;height:87px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#e9ece6;display:block}
+.sb-pk-t{display:flex;flex-direction:column;gap:4px;min-width:0}.sb-pk-t input{width:100%;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:7px 9px;font:600 14px var(--f-body)}
+.sb-pk-t small{color:var(--muted);font-size:12px}
+.sb-pk-b{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.sb-pk-b button{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:5px 9px;font:600 12.5px var(--f-body);cursor:pointer}
+.sb-pk-b button:disabled{opacity:.35;cursor:default}.sb-pk-b .x{color:#e5484d}
+.sb-pk-empty{padding:18px 4px 22px}
+.sb-pk-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.sb-pk-act .grow{flex:1}
+@media (max-width:640px){.sb-pk li{grid-template-columns:22px 92px minmax(0,1fr)}.sb-pk img,.sb-pk-ph{width:92px;height:54px}.sb-pk-b{grid-column:1/-1}}
 .sb-psel{width:100%;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:8px 10px;font:600 14px var(--f-body)}
+.sb-psel option,.sb-psel optgroup{background:#fff;color:#16171b}
 .sb-h.rot{fill:#fff;stroke:#16171b;cursor:grab}
-.sb-rot{grid-template-columns:40px 1fr 38px}.sb-rot output{font:600 12px var(--f-body);color:var(--ink);text-align:right}
+.sb-face output{font:600 12.5px var(--f-body);color:var(--ink)}
 .sb-lead{pointer-events:none}
 .sb-ink{padding:4px 6px 2px}.sb-ink>span{display:block;font:600 10.5px/1 var(--f-body);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
 .sb-ink>div{display:grid;grid-template-columns:repeat(4,26px);gap:7px}
