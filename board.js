@@ -18,7 +18,17 @@
   const rad = (d) => (d * Math.PI) / 180;
   const plays = () => (typeof PLAYS !== "undefined" ? PLAYS : [{ id: "o-corner", g: "off", n: "Corner" }]);
   const groups = () => (typeof GROUPS !== "undefined" ? GROUPS : { off: "Offensive set pieces", def: "Defensive set pieces" });
-  const squad = () => (typeof roster !== "undefined" ? roster : []).map((r) => String(r).replace(/^\d+\s+/, "").trim()).filter(Boolean);
+  /* The whole first team (platform player list, 19.11.2026), by line, with shirt numbers. Names as in the app's squad list. */
+  const TEAM = [
+    ["Goalkeepers", [["Strakosha", ""], ["Brignoli", ""], ["Balamotis", ""], ["Angelopoulos", ""]]],
+    ["Defenders", [["Moukoudi", "2"], ["Relvas", "44"], ["Vida", "21"], ["Alexiou", "5"], ["Georgiev", "15"], ["Rota", "12"], ["Pilios", "3"], ["Lykogiannis", ""], ["Christakopoulos", "57"]]],
+    ["Midfielders", [["Kairinen", "6"], ["Majer", "14"], ["Arriaga", "16"], ["Marin", "18"], ["Mantalos", "20"], ["Vitalis", "27"], ["Kaloskamis", "17"], ["Sahabo", "80"]]],
+    ["Forwards", [["Koita", "11"], ["Kutesa", "7"], ["Gacinovic", "8"], ["Zubkov", "10"], ["Joao Mario", ""], ["Jovic", "9"], ["Varga", "25"], ["Argyriou", "99"], ["Zini", "90"]]],
+  ];
+  const KEEPERS = ["Strakosha", "Brignoli", "Balamotis", "Angelopoulos"];
+  const TEAM_NAMES = TEAM.flatMap((g) => g[1].map((x) => x[0]));
+  const plannerSquad = () => (typeof roster !== "undefined" ? roster : []).map((r) => String(r).replace(/^\d+\s+/, "").trim()).filter(Boolean);
+  const squad = () => [...TEAM_NAMES, ...plannerSquad().filter((n) => !TEAM_NAMES.includes(n))];
   const playName = (id) => { const p = plays().find((x) => x.id === id); return p ? p.n + (p.s ? " · " + p.s : "") : ""; };
 
   /* ───────── camera views ───────── */
@@ -45,7 +55,7 @@
   const CORE = ["Mantalos", "Majer", "Jovic", "Varga", "Relvas", "Moukoudi", "Arriaga", "Vitalis", "Rota", "Pilios"];
   function names(n) {
     const s = squad(), out = CORE.filter((x) => s.includes(x));
-    for (const x of s) { if (out.length >= n) break; if (!out.includes(x) && x !== "Strakosha") out.push(x); }
+    for (const x of s) { if (out.length >= n) break; if (!out.includes(x) && !KEEPERS.includes(x)) out.push(x); }
     while (out.length < n) out.push("Player " + (out.length + 1));
     return out.slice(0, n);
   }
@@ -87,6 +97,7 @@
 
   /* ───────── state ───────── */
   let store = { list: [], cur: null };
+  let rotSnap = false, otherName = false;
   let board = null, sel = null, tool = "select", armed = null, armedPose = null, curPose = "p00", poseGroup = "Standing", side = 1, host = null, dragging = null, undo = [], redo = [], saveT = null, raf = 0;
   function load() { try { const j = JSON.parse(localStorage.getItem(BOARD_KEY) || "null"); if (j && Array.isArray(j.list)) store = j; } catch (e) { /* keep empty */ } }
   function persist() {
@@ -196,7 +207,7 @@
       ${crest ? `<image href="${crest}" x="3.6" y="-89.4" width="4.6" height="6.1"/>` : it.team === "aek" ? `<circle cx="5.9" cy="-86.4" r="2" fill="#17181b" stroke="#f8d200" stroke-width=".7"/>` : ""}
       ${line(F.neck, skin, 0.9)}${head}`;
     const fs = clamp(scale() * 0.78, 12, 21);
-    const label = it.name ? `<text x="${sx.toFixed(1)}" y="${(sy - 122 * k).toFixed(1)}" text-anchor="middle" font-size="${fs.toFixed(1)}" class="sb-name">${esc(it.name)}</text>` : "";
+    const label = nameLabel(it, sx, sy - 122 * k + 6, fs);
     const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy + 1).toFixed(1)}" rx="${(24 * k).toFixed(1)}" ry="${(7.8 * k).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
     return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}<g transform="translate(${sx.toFixed(1)},${sy.toFixed(1)}) scale(${k.toFixed(3)})">${body}</g>
       <rect x="${(sx - 18 * k).toFixed(1)}" y="${(sy - 119 * k).toFixed(1)}" width="${(36 * k).toFixed(1)}" height="${(121 * k).toFixed(1)}" fill="transparent"/>${label}</g>`;
@@ -248,18 +259,56 @@
   }
   const loadPoses = (list) => Promise.all(list.flatMap((b) => b.items.filter((i) => i.t === "p").map((i) => loadPose(poseOf(i), i.team))));
 
+  /* Where a figure sits on the screen: feet (sx, sy), picture size, turn (it.rot, degrees clockwise, about the middle of
+     the figure) and the top of the turned figure (for the name). */
+  function figGeom(it) {
+    const p = POSE[poseOf(it)], [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
+    const rot = ((+it.rot || 0) % 360 + 360) % 360, r = rad(rot), cx = sx, cy = sy - h / 2;
+    const hh = Math.abs((w / 2) * Math.sin(r)) + Math.abs((h / 2) * Math.cos(r));
+    return { sx, sy, w, h, k, rot, cx, cy, top: cy - hh, r };
+  }
   function figureSvg(it, selected) {
-    const id = poseOf(it), p = POSE[id], url = poseUrl(id, it.team);
+    const id = poseOf(it), url = poseUrl(id, it.team);
     if (!url) return drawnSvg(it, selected);
-    const [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
+    const G = figGeom(it), { sx, sy, w, h, rot, cx, cy } = G;
     const fs = clamp(scale() * 0.78, 12, 21);
-    const label = it.name ? `<text x="${sx.toFixed(1)}" y="${(sy - h - 6).toFixed(1)}" text-anchor="middle" font-size="${fs.toFixed(1)}" class="sb-name">${esc(it.name)}</text>` : "";
-    const rx = Math.max(w * 0.42, 14 * k * 1.9);
-    const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${(rx + 6).toFixed(1)}" ry="${((rx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
-    const shadow = `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${rx.toFixed(1)}" ry="${(rx * 0.26).toFixed(1)}" fill="rgba(0,0,0,.17)"/>`;
-    const tr = it.flip ? `translate(${(sx * 2).toFixed(1)},0) scale(-1,1)` : "";
-    return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}${shadow}<image href="${url}" x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"${tr ? ` transform="${tr}"` : ""}/>
-      <rect x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="transparent"/>${label}</g>`;
+    const label = nameLabel(it, sx, G.top, fs);
+    const rx = Math.max(w * 0.42, h * 0.16);
+    const turned = rot > 25 && rot < 335;
+    // a turned figure (lying, diving, leaning) gets its shadow under the middle of the body
+    const gy = turned ? cy + Math.abs(Math.sin(G.r)) * h * 0.18 : sy - 1, grx = turned ? Math.max(rx, Math.abs(Math.sin(G.r)) * h * 0.46) : rx;
+    const ring = selected ? `<ellipse cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" rx="${(grx + 6).toFixed(1)}" ry="${((grx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
+    const shadow = `<ellipse cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" rx="${grx.toFixed(1)}" ry="${(grx * 0.26).toFixed(1)}" fill="rgba(0,0,0,.17)"/>`;
+    const fl = it.flip ? ` transform="translate(${(sx * 2).toFixed(1)},0) scale(-1,1)"` : "";
+    const box = `x="${(sx - w / 2).toFixed(1)}" y="${(sy - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"`;
+    return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}${shadow}<g${rot ? ` transform="rotate(${rot.toFixed(1)} ${cx.toFixed(1)} ${cy.toFixed(1)})"` : ""}><image href="${url}" ${box}${fl}/>
+      <rect ${box} fill="transparent"/></g>${label}</g>`;
+  }
+  /* Names: every figure reports its name with the spot just above its head; once all figures are drawn the names are
+     laid out so that none covers another (nearest free spot above or to the side, with a thin line back to the player). */
+  let labels = null;
+  function nameLabel(it, x, top, fs) {
+    if (!it.name) return "";
+    if (labels) { labels.push({ x, y: top - 6, fs, text: it.name }); return ""; }
+    return `<text x="${x.toFixed(1)}" y="${(top - 6).toFixed(1)}" text-anchor="middle" font-size="${fs.toFixed(1)}" class="sb-name">${esc(it.name)}</text>`;
+  }
+  function labelsSvg(list) {
+    const placed = [], out = [];
+    const hit = (b) => placed.some((q) => b.x0 < q.x1 && b.x1 > q.x0 && b.y0 < q.y1 && b.y1 > q.y0);
+    list.sort((a, b) => b.y - a.y || a.x - b.x);                 // players nearest the camera keep their spot first
+    for (const L of list) {
+      const w = L.fs * 0.6 * L.text.length + 8, h = L.fs * 1.12;
+      const cand = [];
+      for (let up = 0; up <= 7; up++) for (const side of [0, -1, 1, -2, 2]) cand.push([side * (w * 0.55), -up * h, Math.abs(side) * 1.25 + up]);
+      cand.sort((a, b) => a[2] - b[2]);
+      let pick = cand[0];
+      for (const c of cand) { const b = { x0: L.x + c[0] - w / 2, x1: L.x + c[0] + w / 2, y0: L.y + c[1] - h * 0.86, y1: L.y + c[1] + h * 0.14 }; if (!hit(b)) { pick = c; break; } }
+      const x = L.x + pick[0], y = L.y + pick[1];
+      placed.push({ x0: x - w / 2, x1: x + w / 2, y0: y - h * 0.86, y1: y + h * 0.14 });
+      if (pick[0] || pick[1]) out.push(`<path d="M${L.x.toFixed(1)} ${(L.y + 4).toFixed(1)} L${x.toFixed(1)} ${(y + 3).toFixed(1)}" stroke="#55585f" stroke-width="1" stroke-dasharray="2 2" fill="none" class="sb-lead"/>`);
+      out.push(`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle" font-size="${L.fs.toFixed(1)}" class="sb-name">${esc(L.text)}</text>`);
+    }
+    return out.join("");
   }
   function posesHtml() {
     const it = board.items.find((i) => i.id === sel && i.t === "p"), cur = it ? poseOf(it) : curPose;
@@ -319,6 +368,12 @@
     const H1 = (x, y, key, kind) => { const [sx, sy] = proj(x, y, 0); return `<circle data-h="${key}" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="8" class="sb-h ${kind || ""}"/>`; };
     if (it.t === "a") return H1(it.a[0], it.a[1], "a") + H1(it.c[0], it.c[1], "c", "mid") + H1(it.b[0], it.b[1], "b");
     if (it.t === "z") return H1(it.x + it.w, it.y, "w") + H1(it.x, it.y + it.h, "h");
+    if (it.t === "p") {                                    // turn handle: drag it round the player (snaps every 45 degrees)
+      const G = figGeom(it), d = G.h / 2 + 22, hx = G.cx + Math.sin(G.r) * d, hy = G.cy - Math.cos(G.r) * d;
+      return `<path d="M${G.cx.toFixed(1)} ${G.cy.toFixed(1)} L${hx.toFixed(1)} ${hy.toFixed(1)}" stroke="#16171b" stroke-width="1.2" stroke-dasharray="3 3" fill="none" pointer-events="none"/>
+        <circle data-h="rot" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="9" class="sb-h rot"><title>Drag to turn the player</title></circle>
+        <path d="M${(hx - 4).toFixed(1)} ${(hy + 1.5).toFixed(1)} a4 4 0 1 1 1.5 3" stroke="#16171b" stroke-width="1.5" fill="none" pointer-events="none"/>`;
+    }
     return "";
   }
 
@@ -326,11 +381,14 @@
   function stageSvg(forExport, noTitle) {
     const { svg: pitch, C } = pitchSvg(), items = board.items, isSel = (it) => !forExport && sel === it.id;
     let s = DEFS + pitch;
+    labels = [];
     s += items.filter((i) => i.t === "z").map((i) => zoneSvg(i, isSel(i))).join("");
     s += goalSvg(C, 0, 1);
     s += items.filter((i) => i.t === "a" && i.kind !== "air").map((i) => arrowSvg(i, isSel(i))).join("");
     s += items.filter((i) => i.t === "p" || i.t === "b").sort((a, b) => proj(b.x, b.y)[2] - proj(a.x, a.y)[2]).map((i) => (i.t === "p" ? figureSvg(i, isSel(i)) : ballSvg(i, isSel(i)))).join("");
     s += items.filter((i) => i.t === "a" && i.kind === "air").map((i) => arrowSvg(i, isSel(i))).join("");
+    const names = labels; labels = null;
+    s += labelsSvg(names);
     s += items.filter((i) => i.t === "t").map((i) => textSvg(i, isSel(i))).join("");
     if (!forExport) { const it = items.find((i) => i.id === sel); if (it) s += handlesSvg(it); }
     if (forExport && !noTitle) {
@@ -388,7 +446,7 @@
             <label class="sb-sl"><span>Zoom</span><input type="range" id="sbZoom" min="0.4" max="3.2" step="0.02" value="${board.cam.zoom}"></label>
             <div class="sb-row"><button class="sb-chip ${board.style !== "grass" ? "on" : ""}" data-style="paper">White pitch</button><button class="sb-chip ${board.style === "grass" ? "on" : ""}" data-style="grass">Green pitch</button></div></section>
           <section id="sbInspect"></section>
-          <section><h3>Figures <small>pose · F flips</small></h3><div id="sbPoses"></div></section>
+          <section><h3>Figures <small>F flips · R turns</small></h3><div id="sbPoses"></div></section>
           <section><h3>Squad <small>click a name, then the pitch</small></h3><div class="sb-squad" id="sbSquad"></div></section>
           <section><h3>Start from a shape</h3><div class="sb-row"><button class="sb-chip ${side > 0 ? "on" : ""}" data-side="1">Right side</button><button class="sb-chip ${side < 0 ? "on" : ""}" data-side="-1">Left side</button></div>
             <div class="sb-views">${TEMPLATES.map((t) => `<button class="sb-chip" data-tpl="${t.id}">${esc(t.n)}</button>`).join("")}</div></section>
@@ -400,13 +458,27 @@
     const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name));
     return squad().map((n) => `<button class="sb-pl ${used.has(n) ? "used" : ""} ${armed === n ? "on" : ""}" data-pl="${esc(n)}">${esc(n)}</button>`).join("") || `<p class="sb-muted">The squad list is empty. Add players in the Week planner.</p>`;
   }
+  /* Name of a player: the whole squad in one list (by line, with numbers; ✓ = already on the pitch), "Other name" for anyone else. */
+  function nameSelect(it) {
+    const used = new Set(board.items.filter((i) => i.t === "p" && i.id !== it.id).map((i) => i.name));
+    const opt = (n, num) => `<option value="${esc(n)}" ${it.name === n ? "selected" : ""}>${num ? num + "  " : ""}${esc(n)}${used.has(n) ? "  ✓" : ""}</option>`;
+    const extra = plannerSquad().filter((n) => !TEAM_NAMES.includes(n));
+    const known = squad().includes(it.name) || !it.name, custom = !known || otherName;
+    return `<select id="sbPSel" class="sb-psel" aria-label="Player name"><option value="" ${!it.name && !custom ? "selected" : ""}>No name</option>
+      ${TEAM.map(([g, l]) => `<optgroup label="${g}">${l.map(([n, num]) => opt(n, num)).join("")}</optgroup>`).join("")}
+      ${extra.length ? `<optgroup label="Squad list">${extra.map((n) => opt(n, "")).join("")}</optgroup>` : ""}
+      <option value="__other" ${custom ? "selected" : ""}>Other name…</option></select>
+      ${custom ? `<input id="sbPName" maxlength="24" value="${esc(it.name)}" placeholder="Type a name (opponent, trialist…)">` : ""}`;
+  }
   function inspectHtml() {
     const it = board.items.find((i) => i.id === sel);
     if (!it) return `<h3>Selected</h3><p class="sb-muted">Nothing selected. Click a player, an arrow or a zone to change it.</p>`;
     const del = `<button class="btn danger sb-ib" data-act="del">${ic("trash")}<span>Delete</span></button>`;
     const sw = (set, cur, attr) => Object.keys(set).map((k) => `<button class="sb-sw ${cur === k ? "on" : ""}" data-${attr}="${k}" style="--c:${Array.isArray(set[k]) ? set[k][1] : set[k]}" aria-label="${k}"></button>`).join("");
-    if (it.t === "p") return `<h3>Player</h3><input id="sbPName" list="sbNames" maxlength="24" value="${esc(it.name)}" placeholder="Name"><datalist id="sbNames">${squad().map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+    if (it.t === "p") return `<h3>Player</h3>${nameSelect(it)}
       <div class="sb-row">${[["aek", "AEK"], ["gk", "Goalkeeper"], ["opp", "Opponent"], ["oppgk", "Opp. GK"]].map(([k, n]) => `<button class="sb-chip ${it.team === k ? "on" : ""}" data-team="${k}">${n}</button>`).join("")}</div>
+      <label class="sb-sl sb-rot"><span>Turn</span><input type="range" id="sbPRot" min="0" max="359" step="1" value="${+it.rot || 0}" title="Turn the player (R / Shift+R = 15°)"><output id="sbPRotV">${+it.rot || 0}°</output></label>
+      <div class="sb-row"><button class="sb-chip" data-rot="-45" title="Shift+R = 15°">↺ 45°</button><button class="sb-chip" data-rot="45" title="R = 15°">↻ 45°</button><button class="sb-chip" data-rot="0">Upright</button></div>
       <div class="sb-row"><button class="sb-chip" data-act="flip" title="Mirror the figure (F)">⇆ Turn the other way</button><span class="sb-muted sb-pn">${esc(POSE[poseOf(it)].n)}</span></div>${del}`;
     if (it.t === "a") return `<h3>Arrow</h3><div class="sb-row">${Object.keys(KINDS).map((k) => `<button class="sb-chip ${it.kind === k ? "on" : ""}" data-kind="${k}">${KINDS[k].n}</button>`).join("")}</div>
       <div class="sb-row">${sw(INK, it.color, "color")}</div><p class="sb-muted">Drag the middle point to bend the line.</p>${del}`;
@@ -414,8 +486,10 @@
     if (it.t === "t") return `<h3>Text</h3><input id="sbText" maxlength="40" value="${esc(it.text)}">${del}`;
     return `<h3>Ball</h3>${del}`;
   }
+  let lastSel = null;
   function refreshSide() {
     if (!host) return;
+    if (sel !== lastSel) { otherName = false; lastSel = sel; }
     host.querySelector("#sbInspect").innerHTML = inspectHtml();
     host.querySelector("#sbSquad").innerHTML = squadHtml();
     host.querySelector("#sbPoses").innerHTML = posesHtml();
@@ -472,6 +546,12 @@
       if (it.t === "a") { it.a = [o.a[0] + dx, o.a[1] + dy]; it.b = [o.b[0] + dx, o.b[1] + dy]; it.c = [o.c[0] + dx, o.c[1] + dy]; } else { it.x = o.x + dx; it.y = o.y + dy; }
     } else if (dragging.kind === "arrow") { it.b = g; it.c = [(it.a[0] + g[0]) / 2, (it.a[1] + g[1]) / 2]; }
     else if (dragging.kind === "zone") { it.w = Math.max(0.6, Math.abs(g[0] - dragging.g0[0])); it.h = Math.max(0.6, Math.abs(g[1] - dragging.g0[1])); }
+    else if (dragging.kind === "handle" && dragging.key === "rot") {
+      const G = figGeom(it), [px, py] = stagePoint(e);
+      let a = (Math.atan2(px - G.cx, -(py - G.cy)) * 180) / Math.PI; a = (a + 360) % 360;
+      const s45 = Math.round(a / 45) * 45; if (Math.abs(a - s45) <= 5) a = s45 % 360;
+      it.rot = Math.round(a); syncRot(it);
+    }
     else if (dragging.kind === "handle") {
       if (it.t === "a") it[dragging.key] = g; else if (dragging.key === "w") it.w = Math.max(0.6, Math.abs(g[0] - it.x)); else it.h = Math.max(0.6, Math.abs(g[1] - it.y));
     }
@@ -486,8 +566,10 @@
     if (d.kind === "arrow" || d.kind === "zone") tool = "select";
     touch(); refreshSide(); draw();
   }
-  function nextName() { const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)); return squad().find((n) => !used.has(n) && n !== gkName()) || ""; }
+  function nextName() { const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)); return squad().find((n) => !used.has(n) && !KEEPERS.includes(n)) || ""; }
   function syncSliders() { const c = board.cam; [["#sbAz", c.az], ["#sbEl", c.el], ["#sbZoom", c.zoom], ["#sbKx", c.kx || 1]].forEach(([q, v]) => { const el = host.querySelector(q); if (el) el.value = v; }); }
+  function turn(it, deg) { it.rot = ((Math.round((+it.rot || 0) + deg) % 360) + 360) % 360; touch(); syncRot(it); draw(); }
+  function syncRot(it) { const s = host && host.querySelector("#sbPRot"), o = host && host.querySelector("#sbPRotV"); if (s) s.value = it.rot || 0; if (o) o.textContent = (it.rot || 0) + "°"; }
   function flip() { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (!it) return; snapshot(); it.flip = !it.flip; touch(); refreshSide(); draw(); }
   function remove() { if (!sel) return; snapshot(); board.items = board.items.filter((i) => i.id !== sel); sel = null; touch(); refreshSide(); draw(); }
   function step(from, to) { if (!from.length) return; to.push(JSON.stringify(board.items)); board.items = JSON.parse(from.pop()); sel = null; touch(); refreshSide(); draw(); }
@@ -497,6 +579,7 @@
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); step(undo, redo); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); step(redo, undo); }
     else if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) { flip(); }
+    else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey) { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (it) { e.preventDefault(); snapshot(); turn(it, e.shiftKey ? -15 : 15); } }
     else if (e.key === "Escape") { sel = null; armed = null; armedPose = null; tool = "select"; refreshSide(); draw(); }
   }
 
@@ -571,7 +654,7 @@
   function bind() {
     const q = (s) => host.querySelector(s), svg = q("#sbSvg");
     svg.addEventListener("pointerdown", down); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
-    svg.addEventListener("dblclick", (e) => { const n = e.target.closest("[data-id]"); const it = n && board.items.find((i) => i.id === n.dataset.id); if (it && it.t === "p") { sel = it.id; refreshSide(); draw(); const f = q("#sbPName"); if (f) { f.focus(); f.select(); } } });
+    svg.addEventListener("dblclick", (e) => { const n = e.target.closest("[data-id]"); const it = n && board.items.find((i) => i.id === n.dataset.id); if (it && it.t === "p") { sel = it.id; refreshSide(); draw(); const f = q("#sbPName") || q("#sbPSel"); if (f) f.focus(); } });
     svg.addEventListener("wheel", (e) => { e.preventDefault(); board.cam.zoom = clamp(board.cam.zoom * (e.deltaY < 0 ? 1.08 : 0.926), 0.4, 3.2); syncSliders(); touch(); draw(); }, { passive: false });
     q("#sbPlay").onchange = (e) => { const p = e.target.value, list = store.list.filter((b) => b.play === p); open(list[list.length - 1] || newBoard(p, guessTemplate(p))); };
     q("#sbPick").onchange = (e) => open(store.list.find((b) => b.id === e.target.value));
@@ -614,6 +697,7 @@
         refreshSide(); return draw();
       }
       if (d.act === "flip") return flip();
+      if (d.rot !== undefined && it && it.t === "p") { snapshot(); if (+d.rot === 0) { it.rot = 0; touch(); syncRot(it); return draw(); } return turn(it, +d.rot); }
       if (d.side) { side = +d.side; return redraw(true); }
       if (d.tpl) {
         if (board.items.length && !confirm("Replace what is on the pitch with this shape?")) return;
@@ -626,10 +710,16 @@
       if (d.team) it.team = d.team; if (d.kind) { it.kind = d.kind; if (d.kind === "block" && it.color === "k") it.color = "r"; } if (d.color) it.color = d.color; if (d.zcolor) it.color = d.zcolor;
       touch(); refreshSide(); draw();
     });
+    q(".sb-side").addEventListener("change", () => { rotSnap = false; });
     q(".sb-side").addEventListener("input", (e) => {
       const it = board.items.find((i) => i.id === sel); if (!it) return;
+      if (e.target.id === "sbPSel") {
+        if (e.target.value === "__other") { otherName = true; refreshSide(); const f = host.querySelector("#sbPName"); if (f) { f.focus(); f.select(); } return; }
+        otherName = false; snapshot(); it.name = e.target.value; touch(); refreshSide(); return draw();
+      }
       if (e.target.id === "sbPName") { it.name = e.target.value; touch(); draw(); host.querySelector("#sbSquad").innerHTML = squadHtml(); }
       if (e.target.id === "sbText") { it.text = e.target.value; touch(); draw(); }
+      if (e.target.id === "sbPRot") { if (!rotSnap) { snapshot(); rotSnap = true; } let a = +e.target.value; const s = Math.round(a / 45) * 45; if (Math.abs(a - s) <= 4) a = s % 360; it.rot = a; touch(); syncRot(it); draw(); }
     });
   }
 
@@ -673,6 +763,10 @@
 .sb-pose:hover{border-color:var(--muted)}.sb-pose.on{outline:2px solid var(--accent);border-color:var(--accent);background:#fff6cc}
 .sb-pose.armed{outline:3px solid #16171b}
 .sb-pn{align-self:center}
+.sb-psel{width:100%;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:8px 10px;font:600 14px var(--f-body)}
+.sb-h.rot{fill:#fff;stroke:#16171b;cursor:grab}
+.sb-rot{grid-template-columns:40px 1fr 38px}.sb-rot output{font:600 12px var(--f-body);color:var(--ink);text-align:right}
+.sb-lead{pointer-events:none}
 .sb-ink{padding:4px 6px 2px}.sb-ink>span{display:block;font:600 10.5px/1 var(--f-body);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
 .sb-ink>div{display:grid;grid-template-columns:repeat(4,26px);gap:7px}
 @media (max-width:1080px){.sb-main{grid-template-columns:minmax(0,1fr)}.sb-tools{flex-direction:row;flex-wrap:wrap}.sb-tools i{width:1px;height:auto;margin:4px 3px}.sb-t span{display:none}.sb-ink>span{display:none}.sb-ink>div{display:flex}.sb-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
