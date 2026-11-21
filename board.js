@@ -4,7 +4,7 @@
    Everything lives in pitch metres (x along the goal line, y out from the goal line, z up) and is projected to the screen,
    so the same drawing can be viewed from any angle. Drawings are grouped by the app's set-play list (PLAYS) and saved in
    localStorage under BOARD_KEY; they are part of Export / Import backup (see dump / restore).
-   21.11.2026: every drawing shows the whole pitch (both halves and goals); views are framed on the full 105 x 68 m.
+   21.11.2026: 3D perspective (slider 3D, camDist); every drawing shows the whole pitch (both halves and goals); views are framed on the full 105 x 68 m.
    Public API: window.SPBoard = { mount(el), unmount(), dump(), restore(data) } */
 (function () {
   "use strict";
@@ -36,13 +36,15 @@
   // 21.11.2026 (Goran): the WHOLE pitch on every drawing. A view is only the camera angle; zoom and centre are computed so that
   // the full 105 x 68 m pitch with both goals fits the board (fitCam). Zoom and pan still allow a close-up.
   const VIEWS = [
-    // Facing the goal from the pitch (az 180), +x is on the LEFT of the screen. "Right" always means the attacking right, so x < 0.
-    { id: "corner-r", n: "Corner · right", az: 140, el: 33 },
-    { id: "corner-l", n: "Corner · left", az: 220, el: 33 },
-    { id: "fk-central", n: "Free kick · central", az: 180, el: 35 },
-    { id: "wide-r", n: "Wide · right", az: 152, el: 33 },
-    { id: "wide-l", n: "Wide · left", az: 208, el: 33 },
-    { id: "behind-goal", n: "From behind the goal", az: 0, el: 35 },
+    // Set plays (21.11.2026, Goran): the camera stands behind the goal we attack (near the corner flag on the side of the
+    // ball) and looks up the pitch, so the action is near and large in 3D and the rest of the pitch goes into the distance.
+    // az 0 = straight from behind the goal. "Right" always means the attacking right, so x < 0.
+    { id: "corner-r", n: "Corner · right", az: 40, el: 34 },
+    { id: "corner-l", n: "Corner · left", az: 320, el: 34 },
+    { id: "fk-central", n: "Free kick · central", az: 0, el: 36 },
+    { id: "wide-r", n: "Wide · right", az: 28, el: 34 },
+    { id: "wide-l", n: "Wide · left", az: 332, el: 34 },
+    { id: "behind-goal", n: "Facing the goal", az: 180, el: 35 },
     // Straight views: the camera is square to the pitch, so the lines run level and upright instead of slanted.
     { id: "half-r", n: "Side · goal right", az: 90, el: 48 },
     { id: "half-l", n: "Side · goal left", az: 270, el: 48 },
@@ -50,24 +52,33 @@
     { id: "top", n: "Top view", az: 90, el: 90 },
   ];
   const viewOf = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
-  /* Camera that shows the whole pitch (both goals and the goal frames) at this angle, centred, with a small margin. */
-  function fitCam(az, el, kx) {
-    const c = { az, el, zoom: 1, tx: 0, ty: HALF_L, kx: kx || 1 };
+  /* 3D perspective (21.11.2026, Goran): far players, the far goal and lines get smaller, like on TV. cam.p = strength
+     0..100 (0 = flat drawing as before); a board without cam.p uses P_DEF. */
+  const P_DEF = 55;
+  const persp = (c) => (c.p === undefined || c.p === null ? P_DEF : +c.p);
+  /* Camera that shows the whole pitch (both goals and the goal frames) at this angle, centred, with a small margin.
+     With perspective the picture is not linear, so zoom and centre are refined a few times. */
+  function fitCam(az, el, kx, p) {
+    const c = { az, el, zoom: 1, tx: 0, ty: HALF_L, kx: kx || 1, p: p === undefined ? P_DEF : p };
     const gh = FIG * 1.3, pts = [];
     for (const x of [-HALF_W, HALF_W]) for (const y of [-4, FULL_L + 4]) pts.push([x, y, 0]);
     for (const x of [-7, 7]) for (const y of [-3.6, FULL_L + 3.6]) pts.push([x, y, gh]);
-    const pr = (p) => projWith(c, p[0], p[1], p[2]);
-    let q = pts.map(pr), w = Math.max(...q.map((v) => v[0])) - Math.min(...q.map((v) => v[0])), h = Math.max(...q.map((v) => v[1])) - Math.min(...q.map((v) => v[1]));
-    c.zoom = Math.min((W * 0.95) / w, (H * 0.9) / h);
-    q = pts.map(pr);
-    const cx = (Math.max(...q.map((v) => v[0])) + Math.min(...q.map((v) => v[0]))) / 2, cy = (Math.max(...q.map((v) => v[1])) + Math.min(...q.map((v) => v[1]))) / 2;
-    const g = unprojWith(c, cx, cy);
-    c.tx = +g[0].toFixed(2); c.ty = +g[1].toFixed(2); c.zoom = +c.zoom.toFixed(3);
+    const pr = (q) => projWith(c, q[0], q[1], q[2]);
+    const box = () => { const q = pts.map(pr), xs = q.map((v) => v[0]), ys = q.map((v) => v[1]);
+      return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 }; };
+    for (let i = 0; i < 5; i++) {
+      let b = box(); c.zoom *= Math.min((W * 0.95) / b.w, (H * 0.9) / b.h);
+      b = box(); const g = unprojWith(c, b.cx, b.cy); c.tx = g[0]; c.ty = g[1];
+    }
+    c.tx = +c.tx.toFixed(2); c.ty = +c.ty.toFixed(2); c.zoom = +c.zoom.toFixed(3);
     return c;
   }
-  const camFrom = (v) => fitCam(v.az, v.el, 1);
-  /* Drawings made before 21.11.2026 showed only the attacking half: same camera angle, framed on the whole pitch (once). */
-  function wholePitch(list) { (list || []).forEach((b) => { if (b && b.cam && !b.full) { b.cam = fitCam(b.cam.az, b.cam.el, 1); b.full = 1; } }); }
+  const camFrom = (v, p) => fitCam(v.az, v.el, 1, p === undefined || p === null ? P_DEF : p);
+  /* Older drawings (half pitch, flat) get the whole pitch in 3D perspective once, with the same camera angle.
+     full = 1: whole pitch (21.11 morning), full = 2: whole pitch with perspective, full = 3: set-play cameras behind the goal. */
+  // full = 3: camera of the set-play views moved behind the goal (a view that faced the goal is mirrored over the goal line,
+  // so it stays on the same side of the ball).
+  function wholePitch(list) { let n = 0; (list || []).forEach((b) => { if (b && b.cam && b.full !== 3) { let az = +b.cam.az || 0; if (az > 100 && az < 260) az = (540 - az) % 360; b.cam = fitCam(az, b.cam.el, 1, P_DEF); b.full = 3; n++; } }); return n; }
 
   /* ───────── templates: a starting shape for each kind of set play (positions in metres, side = +1 right, -1 left) ───────── */
   const CORE = ["Mantalos", "Majer", "Jovic", "Varga", "Relvas", "Moukoudi", "Arriaga", "Vitalis", "Rota", "Pilios"];
@@ -117,7 +128,7 @@
   let store = { list: [], cur: null };
   let rotSnap = false, otherName = false;
   let board = null, sel = null, tool = "select", armed = null, armedPose = null, curPose = "p00", poseGroup = "Standing", side = 1, host = null, dragging = null, undo = [], redo = [], saveT = null, raf = 0;
-  function load() { try { const j = JSON.parse(localStorage.getItem(BOARD_KEY) || "null"); if (j && Array.isArray(j.list)) { store = j; wholePitch(store.list); } } catch (e) { /* keep empty */ } }
+  function load() { try { const j = JSON.parse(localStorage.getItem(BOARD_KEY) || "null"); if (j && Array.isArray(j.list)) { store = j; if (wholePitch(store.list)) persist(); } } catch (e) { /* keep empty */ } }
   function persist() {
     try { localStorage.setItem(BOARD_KEY, JSON.stringify(store)); if (typeof setStatus === "function") setStatus("Drawing saved on this computer · " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })); }
     catch (e) { if (typeof setStatus === "function") setStatus("Could not save the drawing in this browser. Use Export backup."); }
@@ -134,14 +145,34 @@
 
   /* ───────── projection (parallel, like the current drawings): pitch metres -> stage ───────── */
   const scale = () => 12.5 * board.cam.zoom;
+  /* Distance of the camera from the point it looks at (metres). Infinity = flat (parallel) drawing. The camera always stays
+     far enough back that the whole pitch and its stripes are in front of it. */
+  let dCache = { key: "", D: Infinity };
+  function camDist(c) {
+    const p = persp(c);
+    if (!(p > 0)) return Infinity;
+    const key = c.az + "|" + c.el + "|" + c.tx + "|" + c.ty + "|" + p;
+    if (dCache.key === key) return dCache.D;
+    const a = rad(c.az), ce = Math.cos(rad(c.el));
+    let near = Infinity;
+    for (const x of [-60, 60]) for (const y of [-17, FULL_L + 6]) near = Math.min(near, ((x - c.tx) * Math.sin(a) + (y - c.ty) * Math.cos(a)) * ce);
+    const D = Math.max(40 + 260 * Math.pow(1 - p / 100, 2), 14 - near);
+    dCache = { key, D };
+    return D;
+  }
+  /* pitch metres -> stage: [x, y, depth for sorting, size factor of things standing there (1 = flat drawing)] */
   function projWith(c, x, y, z) {
-    const a = rad(c.az), dx = x - c.tx, dy = y - c.ty, s = 12.5 * c.zoom;
-    const xr = dx * Math.cos(a) - dy * Math.sin(a), yr = dx * Math.sin(a) + dy * Math.cos(a);
-    return [W / 2 + s * (c.kx || 1) * xr, H / 2 - s * (yr * Math.sin(rad(c.el)) + (z || 0) * Math.cos(rad(c.el))), yr];
+    const a = rad(c.az), dx = x - c.tx, dy = y - c.ty, s = 12.5 * c.zoom, se = Math.sin(rad(c.el)), ce = Math.cos(rad(c.el));
+    const xr = dx * Math.cos(a) - dy * Math.sin(a), yr = dx * Math.sin(a) + dy * Math.cos(a), up = yr * se + (z || 0) * ce;
+    const D = camDist(c), k = D === Infinity ? 1 : D / Math.max(0.5, D + yr * ce - (z || 0) * se);
+    return [W / 2 + s * (c.kx || 1) * xr * k, H / 2 - s * up * k, yr, k];
   }
   function unprojWith(c, sx, sy) {                // stage -> ground (z = 0)
-    const a = rad(c.az), s = 12.5 * c.zoom;
-    const xr = (sx - W / 2) / (s * (c.kx || 1)), yr = -(sy - H / 2) / (s * Math.sin(rad(c.el)));
+    const a = rad(c.az), s = 12.5 * c.zoom, se = Math.sin(rad(c.el)), ce = Math.cos(rad(c.el)), D = camDist(c);
+    const u = -(sy - H / 2) / s, v = (sx - W / 2) / (s * (c.kx || 1));
+    let xr, yr;
+    if (D === Infinity) { yr = u / se; xr = v; }
+    else { yr = clamp((u * D) / Math.max(1e-6, D * se - u * ce), -250, 350); xr = (v * (D + yr * ce)) / D; }
     return [c.tx + xr * Math.cos(a) + yr * Math.sin(a), c.ty - xr * Math.sin(a) + yr * Math.cos(a)];
   }
   const proj = (x, y, z) => projWith(board.cam, x, y, z);
@@ -210,7 +241,7 @@
     neck: "M-2.9 -99.6 L2.9 -99.6 L3.3 -93.6 L0 -90.6 L-3.3 -93.6 Z",
   };
   function drawnSvg(it, selected) {                       // stands in while the pose picture loads
-    const [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG) / 104, o = "#26272b", skin = "#ecbf98", kit = KIT[it.team] || KIT.aek, F = FIG_PATH;
+    const [sx, sy, , kp] = proj(it.x, it.y, 0), k = (scale() * FIG * kp) / 104, o = "#26272b", skin = "#ecbf98", kit = KIT[it.team] || KIT.aek, F = FIG_PATH;
     const photo = "", crest = "";
     const line = (d, fill, w) => `<path d="${d}" fill="${fill}" stroke="${o}" stroke-width="${w || 1.1}" stroke-linejoin="round"/>`;
     const shade = (d) => `<path d="${d}" fill="url(#sbShade)"/>`;
@@ -227,7 +258,7 @@
       ${line(F.shirt, kit.shirt, 1.2)}<path d="${F.cuffs}" fill="${kit.trim}"/><path d="${F.collar}" fill="${kit.trim}"/>${shade(F.shirt)}
       ${crest ? `<image href="${crest}" x="3.6" y="-89.4" width="4.6" height="6.1"/>` : it.team === "aek" ? `<circle cx="5.9" cy="-86.4" r="2" fill="#17181b" stroke="#f8d200" stroke-width=".7"/>` : ""}
       ${line(F.neck, skin, 0.9)}${head}`;
-    const fs = clamp(scale() * 0.78, 12, 21);
+    const fs = clamp(scale() * 0.78 * kp, 10, 22);
     const label = nameLabel(it, sx, sy - 122 * k + 6, fs);
     const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy + 1).toFixed(1)}" rx="${(24 * k).toFixed(1)}" ry="${(7.8 * k).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
     return `<g data-id="${it.id}" class="sb-item sb-fig">${ring}<g transform="translate(${sx.toFixed(1)},${sy.toFixed(1)}) scale(${k.toFixed(3)})">${body}</g>
@@ -301,14 +332,14 @@
   }
   /* Where a figure sits on the screen: feet (sx, sy), picture size, top of the figure (for the name). */
   function figGeom(it) {
-    const p = POSE[look(it).id], [sx, sy] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12) / POSE_H, w = p.w * k, h = p.h * k;
-    return { sx, sy, w, h, k, cx: sx, cy: sy - h / 2, top: sy - h };
+    const p = POSE[look(it).id], [sx, sy, , kp] = proj(it.x, it.y, 0), k = (scale() * FIG * 1.12 * kp) / POSE_H, w = p.w * k, h = p.h * k;
+    return { sx, sy, w, h, k, kp, cx: sx, cy: sy - h / 2, top: sy - h };
   }
   function figureSvg(it, selected) {
     const L = look(it), url = poseUrl(L.id, it.team);
     if (!url) return drawnSvg(it, selected);
     const G = figGeom(it), { sx, sy, w, h } = G;
-    const fs = clamp(scale() * 0.78, 12, 21);
+    const fs = clamp(scale() * 0.78 * G.kp, 10, 22);
     const label = nameLabel(it, sx, G.top, fs);
     const rx = Math.max(w * 0.42, h * 0.16);
     const ring = selected ? `<ellipse cx="${sx.toFixed(1)}" cy="${(sy - 1).toFixed(1)}" rx="${(rx + 6).toFixed(1)}" ry="${((rx + 6) * 0.3).toFixed(1)}" fill="rgba(245,196,0,.35)" stroke="#f5c400" stroke-width="2.4"/>` : "";
@@ -352,7 +383,7 @@
       <p class="sb-muted">${it ? "Click a figure to change the pose of " + esc(it.name || "the selected player") + "." : "Click a figure, then the pitch to place it. Select a player to change its pose."}</p>`;
   }
   function ballSvg(it, selected) {
-    const [sx, sy] = proj(it.x, it.y, 0), r = clamp(scale() * 0.4, 4.5, 11);
+    const [sx, sy, , kp] = proj(it.x, it.y, 0), r = clamp(scale() * 0.4 * kp, 3.5, 12);
     return `<g data-id="${it.id}" class="sb-item">${selected ? `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${(r + 6).toFixed(1)}" fill="rgba(245,196,0,.4)" stroke="#f5c400" stroke-width="2"/>` : ""}
       <ellipse cx="${sx.toFixed(1)}" cy="${(sy + r * 0.2).toFixed(1)}" rx="${(r * 1.2).toFixed(1)}" ry="${(r * 0.45).toFixed(1)}" fill="rgba(0,0,0,.18)"/>
       <circle cx="${sx.toFixed(1)}" cy="${(sy - r * 0.75).toFixed(1)}" r="${r.toFixed(1)}" fill="#fff" stroke="#1d1e22" stroke-width="1.4"/>
@@ -418,9 +449,11 @@
     let s = DEFS + pitch;
     labels = [];
     s += items.filter((i) => i.t === "z").map((i) => zoneSvg(i, isSel(i))).join("");
-    s += goalSvg(C, 0, 1) + goalSvg(C, FULL_L, -1);
     s += items.filter((i) => i.t === "a" && i.kind !== "air").map((i) => arrowSvg(i, isSel(i))).join("");
-    s += items.filter((i) => i.t === "p" || i.t === "b").sort((a, b) => proj(b.x, b.y)[2] - proj(a.x, a.y)[2]).map((i) => (i.t === "p" ? figureSvg(i, isSel(i)) : ballSvg(i, isSel(i)))).join("");
+    // players, balls and both goals in one order, far to near: a goal near the camera covers the players behind it
+    const stand = [...items.filter((i) => i.t === "p" || i.t === "b"), { t: "g", x: 0, y: 0, dir: 1 }, { t: "g", x: 0, y: FULL_L, dir: -1 }];
+    s += stand.map((i) => [i, proj(i.x, i.y)[2]]).sort((a, b) => b[1] - a[1])
+      .map(([i]) => (i.t === "g" ? goalSvg(C, i.y, i.dir) : i.t === "p" ? figureSvg(i, isSel(i)) : ballSvg(i, isSel(i)))).join("");
     s += items.filter((i) => i.t === "a" && i.kind === "air").map((i) => arrowSvg(i, isSel(i))).join("");
     const names = labels; labels = null;
     s += labelsSvg(names);
@@ -481,6 +514,7 @@
             <label class="sb-sl"><span>Width</span><input type="range" id="sbEl" min="22" max="90" step="1" title="Tilt of the camera: higher makes the pitch wider from touchline to touchline" value="${Math.round(board.cam.el)}"></label>
             <label class="sb-sl"><span>Stretch</span><input type="range" id="sbKx" min="1" max="2.2" step="0.02" value="${board.cam.kx || 1}" title="Stretches the pitch sideways to fill the board (1 = true proportions)"></label>
             <label class="sb-sl"><span>Zoom</span><input type="range" id="sbZoom" min="0.25" max="3.2" step="0.02" value="${board.cam.zoom}"></label>
+            <label class="sb-sl"><span>3D</span><input type="range" id="sbP" min="0" max="100" step="1" value="${persp(board.cam)}" title="3D perspective: 0 = flat drawing, higher = far players, lines and the far goal get smaller, like on TV"></label>
             <div class="sb-row"><button class="sb-chip ${board.style !== "grass" ? "on" : ""}" data-style="paper">White pitch</button><button class="sb-chip ${board.style === "grass" ? "on" : ""}" data-style="grass">Green pitch</button></div></section>
           <section id="sbInspect"></section>
           <section><h3>Figures <small>R turns · F mirrors</small></h3><div id="sbPoses"></div></section>
@@ -611,7 +645,7 @@
     touch(); refreshSide(); draw();
   }
   function nextName() { const used = new Set(board.items.filter((i) => i.t === "p").map((i) => i.name)); return squad().find((n) => !used.has(n) && !KEEPERS.includes(n)) || ""; }
-  function syncSliders() { const c = board.cam; [["#sbAz", c.az], ["#sbEl", c.el], ["#sbZoom", c.zoom], ["#sbKx", c.kx || 1]].forEach(([q, v]) => { const el = host.querySelector(q); if (el) el.value = v; }); }
+  function syncSliders() { const c = board.cam; [["#sbAz", c.az], ["#sbEl", c.el], ["#sbZoom", c.zoom], ["#sbKx", c.kx || 1], ["#sbP", persp(c)]].forEach(([q, v]) => { const el = host.querySelector(q); if (el) el.value = v; }); }
   function turn(it, deg) { it.face = (((Math.round((faceOf(it) + deg) / 45) * 45) % 360) + 360) % 360; delete it.flip; touch(); syncRot(it); draw(); }
   function syncRot(it) { const f = faceOf(it), s = host && host.querySelector("#sbPRot"), o = host && host.querySelector("#sbPRotV"); if (s) s.value = f; if (o) o.textContent = FACE_NAME[Math.round(f / 45) % 8]; }
   function flip() { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (!it) return; snapshot(); it.face = (360 - faceOf(it)) % 360; delete it.flip; touch(); refreshSide(); draw(); }
@@ -804,11 +838,12 @@
     q("#sbAz").onchange = () => syncSliders();
     q("#sbEl").oninput = (e) => { board.cam.el = +e.target.value; touch(); draw(); };
     q("#sbZoom").oninput = (e) => { board.cam.zoom = +e.target.value; touch(); draw(); };
+    q("#sbP").oninput = (e) => { board.cam.p = +e.target.value; touch(); draw(); };
     q("#sbKx").oninput = (e) => { board.cam.kx = +e.target.value; touch(); draw(); };
     q(".sb-side").addEventListener("click", (e) => {
       const b = e.target.closest("button"); if (!b) return;
       const it = board.items.find((i) => i.id === sel), d = b.dataset;
-      if (d.view) { board.cam = camFrom(viewOf(d.view)); syncSliders(); touch(); return draw(); }
+      if (d.view) { board.cam = camFrom(viewOf(d.view), persp(board.cam)); syncSliders(); touch(); return draw(); }
       if (d.style) { board.style = d.style; touch(); return redraw(true); }
       if (d.pgroup) { poseGroup = d.pgroup; return refreshSide(); }
       if (d.pose) {
@@ -822,7 +857,7 @@
       if (d.side) { side = +d.side; return redraw(true); }
       if (d.tpl) {
         if (board.items.length && !confirm("Replace what is on the pitch with this shape?")) return;
-        const t = TEMPLATES.find((x) => x.id === d.tpl); snapshot(); board.items = t.build(-side); board.cam = camFrom(viewOf(t.view(side))); sel = null; touch(); return redraw(true);
+        const t = TEMPLATES.find((x) => x.id === d.tpl); snapshot(); board.items = t.build(-side); board.cam = camFrom(viewOf(t.view(side)), persp(board.cam)); sel = null; touch(); return redraw(true);
       }
       if (d.pl) { armed = armed === d.pl ? null : d.pl; armedPose = null; tool = "select"; sel = null; refreshSide(); return draw(); }
       if (d.act === "del") return remove();
