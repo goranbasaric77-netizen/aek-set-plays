@@ -5,6 +5,7 @@
    so the same drawing can be viewed from any angle. Drawings are grouped by the app's set-play list (PLAYS) and saved in
    localStorage under BOARD_KEY; they are part of Export / Import backup (see dump / restore).
    21.11.2026: 3D perspective (slider 3D, camDist); every drawing shows the whole pitch (both halves and goals); views are framed on the full 105 x 68 m.
+   Phases: board.phases (see "phases and animation"); Play moves players and the ball from phase to phase.
    Public API: window.SPBoard = { mount(el), unmount(), dump(), restore(data) } */
 (function () {
   "use strict";
@@ -127,13 +128,14 @@
   /* ───────── state ───────── */
   let store = { list: [], cur: null };
   let rotSnap = false, otherName = false;
+  let anim = null;                                 // phase animation while it plays: { t0, speed, raf }
   let board = null, sel = null, tool = "select", armed = null, armedPose = null, curPose = "p00", poseGroup = "Standing", side = 1, host = null, dragging = null, undo = [], redo = [], saveT = null, raf = 0;
   function load() { try { const j = JSON.parse(localStorage.getItem(BOARD_KEY) || "null"); if (j && Array.isArray(j.list)) { store = j; if (wholePitch(store.list)) persist(); } } catch (e) { /* keep empty */ } }
   function persist() {
     try { localStorage.setItem(BOARD_KEY, JSON.stringify(store)); if (typeof setStatus === "function") setStatus("Drawing saved on this computer · " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })); }
     catch (e) { if (typeof setStatus === "function") setStatus("Could not save the drawing in this browser. Use Export backup."); }
   }
-  function touch() { if (!board) return; board.updated = new Date().toISOString(); clearTimeout(saveT); saveT = setTimeout(persist, 300); }
+  function touch() { if (!board) return; if (board.phases) board.phases[board.ph || 0] = board.items; board.updated = new Date().toISOString(); clearTimeout(saveT); saveT = setTimeout(persist, 300); }
   function snapshot() { undo.push(JSON.stringify(board.items)); if (undo.length > 60) undo.shift(); redo = []; }
   function newBoard(play, tplId) {
     const tpl = TEMPLATES.find((t) => t.id === tplId) || TEMPLATES[0];
@@ -383,9 +385,10 @@
       <p class="sb-muted">${it ? "Click a figure to change the pose of " + esc(it.name || "the selected player") + "." : "Click a figure, then the pitch to place it. Select a player to change its pose."}</p>`;
   }
   function ballSvg(it, selected) {
-    const [sx, sy, , kp] = proj(it.x, it.y, 0), r = clamp(scale() * 0.4 * kp, 3.5, 12);
+    const [gx, gy, , kp] = proj(it.x, it.y, 0), r = clamp(scale() * 0.4 * kp, 3.5, 12);
+    const [sx, sy] = it.z ? proj(it.x, it.y, it.z) : [gx, gy];      // in the air (phase animation): the shadow stays on the ground
     return `<g data-id="${it.id}" class="sb-item">${selected ? `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${(r + 6).toFixed(1)}" fill="rgba(245,196,0,.4)" stroke="#f5c400" stroke-width="2"/>` : ""}
-      <ellipse cx="${sx.toFixed(1)}" cy="${(sy + r * 0.2).toFixed(1)}" rx="${(r * 1.2).toFixed(1)}" ry="${(r * 0.45).toFixed(1)}" fill="rgba(0,0,0,.18)"/>
+      <ellipse cx="${gx.toFixed(1)}" cy="${(gy + r * 0.2).toFixed(1)}" rx="${(r * 1.2).toFixed(1)}" ry="${(r * 0.45).toFixed(1)}" fill="rgba(0,0,0,${it.z ? ".1" : ".18"})"/>
       <circle cx="${sx.toFixed(1)}" cy="${(sy - r * 0.75).toFixed(1)}" r="${r.toFixed(1)}" fill="#fff" stroke="#1d1e22" stroke-width="1.4"/>
       <path d="M${(sx - r * 0.38).toFixed(1)} ${(sy - r * 0.95).toFixed(1)} l${(r * 0.38).toFixed(1)} ${(-r * 0.32).toFixed(1)} l${(r * 0.38).toFixed(1)} ${(r * 0.32).toFixed(1)} l${(-r * 0.15).toFixed(1)} ${(r * 0.46).toFixed(1)} l${(-r * 0.46).toFixed(1)} 0 Z" fill="#1d1e22"/>
       <circle cx="${sx.toFixed(1)}" cy="${(sy - r * 0.75).toFixed(1)}" r="${(r + 7).toFixed(1)}" fill="transparent"/></g>`;
@@ -448,16 +451,17 @@
     const { svg: pitch, C } = pitchSvg(), items = board.items, isSel = (it) => !forExport && sel === it.id;
     let s = DEFS + pitch;
     labels = [];
-    s += items.filter((i) => i.t === "z").map((i) => zoneSvg(i, isSel(i))).join("");
-    s += items.filter((i) => i.t === "a" && i.kind !== "air").map((i) => arrowSvg(i, isSel(i))).join("");
+    const O = (i, x) => (i.op !== undefined && i.op < 1 ? `<g opacity="${Math.max(0, i.op).toFixed(2)}">${x}</g>` : x);   // fading in the animation
+    s += items.filter((i) => i.t === "z").map((i) => O(i, zoneSvg(i, isSel(i)))).join("");
+    s += items.filter((i) => i.t === "a" && i.kind !== "air").map((i) => O(i, arrowSvg(i, isSel(i)))).join("");
     // players, balls and both goals in one order, far to near: a goal near the camera covers the players behind it
     const stand = [...items.filter((i) => i.t === "p" || i.t === "b"), { t: "g", x: 0, y: 0, dir: 1 }, { t: "g", x: 0, y: FULL_L, dir: -1 }];
     s += stand.map((i) => [i, proj(i.x, i.y)[2]]).sort((a, b) => b[1] - a[1])
-      .map(([i]) => (i.t === "g" ? goalSvg(C, i.y, i.dir) : i.t === "p" ? figureSvg(i, isSel(i)) : ballSvg(i, isSel(i)))).join("");
-    s += items.filter((i) => i.t === "a" && i.kind === "air").map((i) => arrowSvg(i, isSel(i))).join("");
+      .map(([i]) => (i.t === "g" ? goalSvg(C, i.y, i.dir) : O(i, i.t === "p" ? figureSvg(i, isSel(i)) : ballSvg(i, isSel(i))))).join("");
+    s += items.filter((i) => i.t === "a" && i.kind === "air").map((i) => O(i, arrowSvg(i, isSel(i)))).join("");
     const names = labels; labels = null;
     s += labelsSvg(names);
-    s += items.filter((i) => i.t === "t").map((i) => textSvg(i, isSel(i))).join("");
+    s += items.filter((i) => i.t === "t").map((i) => O(i, textSvg(i, isSel(i)))).join("");
     if (!forExport) { const it = items.find((i) => i.id === sel); if (it) s += handlesSvg(it); }
     if (forExport && !noTitle) {
       const title = [playName(board.play), board.name, board.opponent ? "vs " + board.opponent : ""].filter(Boolean).join("  ·  ");
@@ -466,7 +470,7 @@
     }
     return s;
   }
-  function draw() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { const svg = host && host.querySelector("#sbSvg"); if (svg && board) svg.innerHTML = stageSvg(false); }); }
+  function draw() { if (anim) return; cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { const svg = host && host.querySelector("#sbSvg"); if (svg && board) svg.innerHTML = stageSvg(false); }); }
 
   /* ───────── interface ───────── */
   const ICON = {
@@ -503,6 +507,7 @@
         <label class="sb-f grow"><span>Name of the variation</span><input id="sbName" maxlength="60" value="${esc(board.name)}" placeholder="For example: Near post, block on the keeper"></label>
         <label class="sb-f"><span>Opponent / match</span><input id="sbOpp" maxlength="40" value="${esc(board.opponent)}" placeholder="Kalamata"></label>
       </div>
+      <div class="sb-phases" id="sbPhases">${phasesHtml()}</div>
       <div class="sb-main">
         <div class="sb-tools" role="toolbar" aria-label="Drawing tools">${TOOLS.map((t) => (t ? `<button class="sb-t ${t[0]}" data-tool="${t[0]}" title="${esc(t[2])}" aria-label="${esc(t[1])}" aria-pressed="${tool === t[0]}">${ic(t[0])}<span>${esc(t[1])}</span></button>` : `<i></i>`)).join("")}
           <i></i><button class="sb-t" id="sbUndo" title="Undo (Ctrl+Z)" aria-label="Undo">${ic("undo")}<span>Undo</span></button><button class="sb-t" id="sbRedo" title="Redo (Ctrl+Y)" aria-label="Redo">${ic("redo")}<span>Redo</span></button>
@@ -583,9 +588,10 @@
 
   /* ───────── pointer work ───────── */
   function stagePoint(e) { const r = host.querySelector("#sbSvg").getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H]; }
-  const ground = (e) => { const [sx, sy] = stagePoint(e); const g = unproj(sx, sy); return [clamp(g[0], -45, 45), clamp(g[1], -8, 62)]; };
+  const ground = (e) => { const [sx, sy] = stagePoint(e); const g = unproj(sx, sy); return [clamp(g[0], -45, 45), clamp(g[1], -8, FULL_L + 8)]; };
   function down(e) {
     if (e.button && e.button !== 0) return;
+    if (anim) { stopAnim(); return; }
     const svg = host.querySelector("#sbSvg"), g = ground(e), h = e.target.closest("[data-h]"), node = e.target.closest("[data-id]");
     try { svg.setPointerCapture(e.pointerId); } catch (g) { /* pointer already gone: dragging still works while it stays over the pitch */ }
     if (armed || armedPose) { snapshot(); const it = P("aek", g[0], g[1], armed || nextName()); it.pose = curPose; it.face = STAND.includes(curPose) ? POSE_FACE[curPose] : 90; board.items.push(it); armedPose = null; sel = it.id; armed = null; tool = "select"; touch(); refreshSide(); draw(); return; }
@@ -659,6 +665,92 @@
     else if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) { flip(); }
     else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey) { const it = board.items.find((i) => i.id === sel && i.t === "p"); if (it) { e.preventDefault(); snapshot(); turn(it, e.shiftKey ? -45 : 45); } }
     else if (e.key === "Escape") { sel = null; armed = null; armedPose = null; tool = "select"; refreshSide(); draw(); }
+  }
+
+  /* ───────── phases and animation (21.11.2026, idea from My Soccer System) ─────────
+     A drawing can have phases: phase 1 is the start, every next phase is where the players and the ball go. The coach draws
+     only the positions of each phase; Play moves everything from phase to phase (players run, the ball rolls or flies).
+     board.phases = [items of phase 1, items of phase 2, ...], board.ph = the phase being edited, board.items = that phase.
+     Items keep their id in every phase, so a player in phase 2 is the same player as in phase 1. */
+  const MOVE_MS = 1500, HOLD_MS = 650, RUN_POSE = "p18";
+  const phaseList = () => board.phases || [board.items];
+  function attach(b) { if (b && Array.isArray(b.phases) && b.phases.length) { b.ph = clamp(b.ph || 0, 0, b.phases.length - 1); b.items = b.phases[b.ph]; } return b; }
+  function ensurePhases() { if (!board.phases) { board.phases = [board.items]; board.ph = 0; } }
+  function goPhase(i) {
+    stopAnim(); ensurePhases(); board.phases[board.ph] = board.items;
+    board.ph = clamp(i, 0, board.phases.length - 1); board.items = board.phases[board.ph];
+    sel = null; undo = []; redo = []; touch(); refreshPhases(); refreshSide(); draw();
+  }
+  function addPhase() {                                   // the next phase starts as a copy of this one, without its lines
+    stopAnim(); ensurePhases();
+    board.phases.splice(board.ph + 1, 0, JSON.parse(JSON.stringify(board.items.filter((i) => i.t !== "a"))));
+    goPhase(board.ph + 1);
+    if (typeof setStatus === "function") setStatus("Phase " + (board.ph + 1) + ": move the players and the ball to where they go");
+  }
+  function delPhase() {
+    ensurePhases(); if (board.phases.length < 2) return;
+    if (!confirm("Delete phase " + (board.ph + 1) + "?")) return;
+    board.phases.splice(board.ph, 1); if (board.phases.length === 1) { board.items = board.phases[0]; delete board.phases; board.ph = 0; sel = null; touch(); refreshPhases(); refreshSide(); return draw(); }
+    goPhase(Math.min(board.ph, board.phases.length - 1));
+  }
+  function phasesHtml() {
+    const L = phaseList(), cur = board.ph || 0, n = L.length;
+    return `<span class="sb-ph-l">Phases</span>${L.map((_, i) => `<button class="sb-ph ${i === cur && !anim ? "on" : ""}" data-ph="${i}" title="Phase ${i + 1}: click to draw it">${i + 1}</button>`).join("")}
+      <button class="btn sb-ib" id="sbPhAdd" title="Next phase: a copy of this one without the lines. Move the players and the ball to where they go.">${ic("plus")}<span>Phase</span></button>
+      <button class="btn sb-ib" id="sbPhDel" ${n > 1 ? "" : "disabled"} title="Delete this phase">${ic("trash")}</button>
+      <span class="sb-grow"></span>
+      <label class="sb-speed" title="Speed of the animation"><span>Speed</span><select id="sbSpeed">${[[0.5, "Slow"], [1, "Normal"], [1.6, "Fast"]].map(([v, t]) => `<option value="${v}" ${(+(board.speed || 1)) === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      <button class="btn primary sb-ib sb-playbtn" id="sbAnim" ${n > 1 ? "" : "disabled"} title="${n > 1 ? "Play the phases one after another" : "Add a phase first"}">${anim ? "■ Stop" : "▶ Play"}</button>`;
+  }
+  function refreshPhases() { const el = host && host.querySelector("#sbPhases"); if (el) el.innerHTML = phasesHtml(); }
+  const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  /* Items between phase A and phase B at time t (0..1). Players run (running figure, turned the way they go), the ball
+     rolls, or flies in an arc when an "air" line starts at it or the pass is long. Lines and zones of A fade out, of B fade in. */
+  function tween(A, B, t) {
+    const byA = new Map(A.map((i) => [i.id, i])), byB = new Set(B.map((i) => i.id)), out = [];
+    for (const b of B) {
+      const a = byA.get(b.id);
+      if (b.t === "a" || b.t === "z" || !a || a.t !== b.t || a.x === undefined) { out.push({ ...b, op: t }); continue; }
+      const it = { ...b, x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, d = Math.hypot(b.x - a.x, b.y - a.y);
+      if (b.t === "p" && d > 1 && t > 0 && t < 1) {
+        it.pose = RUN_POSE; const s0 = proj(a.x, a.y, 0), s1 = proj(b.x, b.y, 0); it.face = s1[0] >= s0[0] ? 90 : 270; delete it.flip;
+      }
+      if (b.t === "b" && d > 0.5) {
+        const air = A.some((x) => x.t === "a" && x.kind === "air" && Math.hypot(x.a[0] - a.x, x.a[1] - a.y) < 4) || d > 25;
+        if (air) it.z = clamp(d * 0.2, 1.5, 9) * 4 * t * (1 - t);
+      }
+      out.push(it);
+    }
+    for (const a of A) if (!byB.has(a.id)) out.push({ ...a, op: 1 - t });
+    return out;
+  }
+  function frame(items, label) {
+    const svg = host && host.querySelector("#sbSvg"); if (!svg) return;
+    const keep = board.items; board.items = items; let s = stageSvg(true, true); board.items = keep;
+    const w = 26 + label.length * 9.5;
+    s += `<g><rect x="16" y="14" rx="9" width="${w}" height="36" fill="rgba(22,23,27,.84)"/><text x="${16 + w / 2}" y="38" text-anchor="middle" font-size="17" font-weight="700" fill="#fff" font-family="Arial, sans-serif">${esc(label)}</text></g>`;
+    svg.innerHTML = s;
+  }
+  async function playAnim() {
+    ensurePhases(); if (board.phases.length < 2) return;
+    board.phases[board.ph] = board.items; sel = null;
+    const teams = [...new Set(board.phases.flat().filter((i) => i.t === "p").map((i) => i.team))];
+    await Promise.all([loadPoses([{ items: board.phases.flat() }]), ...teams.map((t) => loadPose(RUN_POSE, t))]);
+    anim = { t0: performance.now(), speed: +(board.speed || 1) };
+    refreshPhases(); refreshSide(); tick();
+  }
+  function stopAnim() { if (!anim) return; cancelAnimationFrame(anim.raf); anim = null; if (host) { refreshPhases(); draw(); } }
+  function tick() {
+    if (!anim || !host || !host.isConnected) { anim = null; return; }
+    const L = board.phases, mv = MOVE_MS / anim.speed, hd = HOLD_MS / anim.speed, seg = mv + hd, el = performance.now() - anim.t0, i = Math.floor(el / seg);
+    if (i >= L.length - 1) {                               // the end: the last phase stays on screen a moment, then editing returns
+      frame(L[L.length - 1], "Phase " + L.length);
+      if (el > (L.length - 1) * seg + hd * 2.2) { anim = null; refreshPhases(); draw(); return; }
+      anim.raf = requestAnimationFrame(tick); return;
+    }
+    const t = clamp((el - i * seg - hd) / mv, 0, 1);
+    frame(t > 0 ? tween(L[i], L[i + 1], ease(t)) : L[i], t > 0 ? `Phase ${i + 1} → ${i + 2}` : `Phase ${i + 1}`);
+    anim.raf = requestAnimationFrame(tick);
   }
 
   /* ───────── picture ───────── */
@@ -801,7 +893,7 @@
   }
 
   /* ───────── wiring ───────── */
-  function open(b) { board = b; store.cur = b.id; sel = null; undo = []; redo = []; persist(); redraw(true); }
+  function open(b) { stopAnim(); board = attach(b); store.cur = b.id; sel = null; undo = []; redo = []; persist(); redraw(true); }
   function bind() {
     const q = (s) => host.querySelector(s), svg = q("#sbSvg");
     svg.addEventListener("pointerdown", down); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
@@ -810,7 +902,18 @@
     q("#sbPlay").onchange = (e) => { const p = e.target.value, list = store.list.filter((b) => b.play === p); open(list[list.length - 1] || newBoard(p, guessTemplate(p))); };
     q("#sbPick").onchange = (e) => open(store.list.find((b) => b.id === e.target.value));
     q("#sbNew").onclick = () => open(newBoard(board.play, guessTemplate(board.play)));
-    q("#sbDup").onclick = () => { const b = JSON.parse(JSON.stringify(board)); b.id = uid(); b.name = (board.name || "Variation") + " (copy)"; b.items.forEach((i) => (i.id = uid())); store.list.push(b); open(b); };
+    q("#sbDup").onclick = () => {
+      const b = JSON.parse(JSON.stringify(board)), ids = {}; b.id = uid(); b.name = (board.name || "Variation") + " (copy)";
+      (b.phases || [b.items]).concat(b.phases ? [b.items] : []).forEach((L) => L.forEach((i) => (i.id = ids[i.id] || (ids[i.id] = uid()))));
+      store.list.push(b); open(b);
+    };
+    q("#sbPhases").addEventListener("click", (e) => {
+      const ph = e.target.closest("[data-ph]"); if (ph) return goPhase(+ph.dataset.ph);
+      if (e.target.closest("#sbPhAdd")) return addPhase();
+      if (e.target.closest("#sbPhDel")) return delPhase();
+      if (e.target.closest("#sbAnim")) return anim ? stopAnim() : playAnim();
+    });
+    q("#sbPhases").addEventListener("change", (e) => { if (e.target.id === "sbSpeed") { board.speed = +e.target.value; touch(); if (anim) anim.speed = board.speed; } });
     q("#sbDel").onclick = () => {
       if (!confirm("Delete this drawing?\n\n" + playName(board.play) + (board.name ? " · " + board.name : ""))) return;
       const play = board.play; store.list = store.list.filter((b) => b.id !== board.id); const rest = store.list.filter((b) => b.play === play);
@@ -890,6 +993,13 @@
 .sb-side textarea{resize:vertical;line-height:1.45}
 .sb-ib{display:inline-flex;align-items:center;gap:6px;padding:8px 12px}
 .sb-main{display:grid;grid-template-columns:auto minmax(0,1fr) 270px;gap:12px;align-items:start}
+.sb-phases{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;padding:7px 10px;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.sb-ph-l{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-right:4px}
+.sb-ph{min-width:36px;height:34px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font-weight:800;font-size:15px;cursor:pointer}
+.sb-ph.on{background:#f5c400;border-color:#f5c400;color:#16171b}
+.sb-grow{flex:1}
+.sb-speed{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}.sb-speed select{height:34px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;padding:0 6px}
+.sb-playbtn{min-width:96px}
 .sb-tools{display:flex;flex-direction:column;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px}
 .sb-tools i{height:1px;background:var(--line);margin:3px 4px}
 .sb-t{display:flex;align-items:center;gap:8px;border:0;background:none;color:var(--ink);border-radius:7px;padding:8px 10px;cursor:pointer;font:500 12.5px var(--f-body);text-align:left;white-space:nowrap}
@@ -953,12 +1063,12 @@
     mount(el) {
       host = el; load();
       if (!document.getElementById("sbCss")) { const s = document.createElement("style"); s.id = "sbCss"; s.textContent = CSS; document.head.appendChild(s); }
-      board = store.list.find((b) => b.id === store.cur) || store.list[store.list.length - 1] || newBoard(plays()[0].id, guessTemplate(plays()[0].id));
-      tool = "select"; armed = null; sel = null;
+      board = attach(store.list.find((b) => b.id === store.cur) || store.list[store.list.length - 1] || newBoard(plays()[0].id, guessTemplate(plays()[0].id)));
+      tool = "select"; armed = null; sel = null; anim = null;
       redraw(true);
       document.removeEventListener("keydown", keys); document.addEventListener("keydown", keys);
     },
-    unmount() { host = null; document.removeEventListener("keydown", keys); },
+    unmount() { if (anim) { cancelAnimationFrame(anim.raf); anim = null; } host = null; document.removeEventListener("keydown", keys); },
     dump() { load(); return store; },
     pdf() { if (!board) { load(); board = store.list.find((b) => b.id === store.cur) || store.list[store.list.length - 1]; } return board ? pdf() : setStatus("There is no drawing yet."); },
     restore(data) { if (data && Array.isArray(data.list)) { store = data; wholePitch(store.list); persist(); } },
